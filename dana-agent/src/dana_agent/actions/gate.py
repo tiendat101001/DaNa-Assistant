@@ -51,6 +51,11 @@ class ActionGate:
     def audit(self) -> AuditLog:
         return self._audit
 
+    def classify(self, action: Action) -> Reversibility:
+        """Reversibility of an action, without recording an audit entry (for
+        labelling UI/events). Use ``decide`` for the gated, audited decision."""
+        return self._provider.classify(action)
+
     def decide(self, action: Action) -> tuple[GateDecision, Reversibility]:
         """Classify and decide; records a (non-executing) audit entry."""
         reversibility = self._provider.classify(action)

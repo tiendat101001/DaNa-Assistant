@@ -10,9 +10,9 @@ import pytest
 from dana_agent.capabilities import validate_app_config
 from dana_agent.config import AppConfig
 from dana_agent.errors import CapabilityError, ConfigError
-from dana_agent.providers.base import Capabilities, LLMProvider, STTProvider
+from dana_agent.providers.base import Capabilities, STTProvider
 from dana_agent.providers.registry import register
-from dana_agent.types import AudioFrame, LLMChunk, Message, Tool, Transcript
+from dana_agent.types import AudioFrame, Transcript
 
 
 def test_default_stack_validates() -> None:
@@ -48,22 +48,14 @@ def test_language_not_supported_fails(registry_snapshot: None) -> None:
         validate_app_config(cfg)
 
 
-def test_llm_without_tool_calling_fails(registry_snapshot: None) -> None:
-    @register("llm", "no_tools")
-    class NoToolsLLM(LLMProvider):
-        def __init__(self, cfg: object) -> None: ...
-
-        async def stream(
-            self, messages: list[Message], tools: list[Tool] | None = None
-        ) -> AsyncIterator[LLMChunk]:
-            yield LLMChunk(done=True)  # pragma: no cover
-
-        @property
-        def capabilities(self) -> Capabilities:
-            return Capabilities(
-                streaming=True, languages=frozenset({"en", "vi"}), tool_calling=False
-            )
-
-    cfg = AppConfig.model_validate({"conversation": {"llm": {"provider": "no_tools"}}})
-    with pytest.raises(CapabilityError, match="tool calling"):
+def test_unknown_brain_llm_provider_fails() -> None:
+    # The brain's LLM is built by init_chat_model; validate its provider against
+    # the brain's supported set, not the LLMProvider registry.
+    cfg = AppConfig.model_validate({"conversation": {"llm": {"provider": "frankenmodel"}}})
+    with pytest.raises(ConfigError, match="unknown brain llm provider 'frankenmodel'"):
         validate_app_config(cfg)
+
+
+def test_default_brain_provider_is_supported() -> None:
+    # mock is a valid brain provider (offline echo model).
+    validate_app_config(AppConfig())

@@ -1,15 +1,11 @@
-"""The agent brain: a LangGraph-style typed state graph over the LLM provider.
+"""The agent brain: a LangGraph agent/tools graph over a chat model built with
+``init_chat_model`` (langgraph-agent-patterns skill).
 
-Models the assistant's reasoning as an explicit agent/tools loop with a
-conditional edge (langgraph-agent-patterns skill): the agent node streams the
-model; if it emits tool calls they are gated and executed, then control returns
-to the agent; otherwise the turn ends. Destructive tools pause the turn for a
-human decision (the confirmation gate), resumable because state is checkpointed.
-
-Implemented over DaNa's own provider abstractions (``LLMProvider`` +
-``ActionGate``) rather than importing LangGraph directly, because the model here
-is a streaming provider (a Pipecat service in Phase 3), not a LangChain chat
-model — see the brain module docstring in ``agent.py``.
+Uses LangGraph's own nodes (``ToolNode`` + ``tools_condition``), token streaming
+(``astream_events`` -> ``on_chat_model_stream``), checkpointer-backed memory, and
+native ``interrupt`` for the destructive-action confirmation gate — rather than a
+hand-rolled loop. The chat model is provider-swappable purely from ``LLMConfig``
+via ``init_chat_model``; an offline ``MockChatModel`` backs the ``mock`` provider.
 """
 
 from dana_agent.brain.agent import Brain
@@ -22,24 +18,22 @@ from dana_agent.brain.events import (
     ToolInvoked,
     TurnComplete,
 )
-from dana_agent.brain.state import (
-    AgentState,
-    Checkpointer,
-    InMemoryCheckpointer,
-    PendingConfirmation,
-)
+from dana_agent.brain.model import BRAIN_PROVIDERS, MockChatModel, build_chat_model
+from dana_agent.brain.tools import ToolSpec, build_gated_tool, build_gated_tools
 
 __all__ = [
-    "AgentState",
+    "BRAIN_PROVIDERS",
     "Brain",
     "BrainEvent",
-    "Checkpointer",
     "ConfirmationRequired",
-    "InMemoryCheckpointer",
-    "PendingConfirmation",
+    "MockChatModel",
     "StepLimitReached",
     "TokenDelta",
     "ToolCompleted",
     "ToolInvoked",
+    "ToolSpec",
     "TurnComplete",
+    "build_chat_model",
+    "build_gated_tool",
+    "build_gated_tools",
 ]

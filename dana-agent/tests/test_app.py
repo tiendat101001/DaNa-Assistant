@@ -13,7 +13,6 @@ async def test_build_cascade_stack() -> None:
     assert stack.wake_gate.state.value == "idle"
     assert stack.gate is not None
     assert stack.stt is not None
-    assert stack.llm is not None
     assert stack.tts is not None
     assert stack.brain is not None
     assert stack.s2s is None
@@ -24,7 +23,6 @@ async def test_build_s2s_stack() -> None:
     stack = build_stack(AppConfig.model_validate({"conversation": {"mode": "s2s"}}))
     assert stack.s2s is not None
     assert stack.stt is None
-    assert stack.llm is None
     assert stack.tts is None
     assert stack.brain is None
     await stack.aclose()

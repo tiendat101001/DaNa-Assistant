@@ -1,27 +1,30 @@
-"""The agent/tools loop.
+"""The brain: a LangGraph agent that streams DaNa ``BrainEvent``s.
 
-    ┌────────────┐
-    │   agent    │  stream the model: text and/or tool calls
-    └─────┬──────┘
-   tools? │ else
-    ┌─────▼──────┐
-    │   tools    │  gate + execute (or pause for confirmation) ──► back to agent
-    └────────────┘
+Wraps the compiled agent/tools graph and translates LangGraph's event stream
+into DaNa's neutral event API so the voice pipeline never sees LangChain types:
 
-Why not LangGraph directly: LangGraph's prebuilt nodes assume a LangChain chat
-model, but DaNa's model is an ``LLMProvider`` streaming abstraction (a Pipecat
-service in Phase 3). This loop follows the same idiomatic shape — typed state, an
-agent/tools conditional edge, checkpointing, human-in-the-loop interrupts, and a
-step limit — over DaNa's own abstractions. Revisit backing it with LangGraph once
-the Pipecat integration is settled (tracked in the backlog).
+- ``on_chat_model_stream`` (agent node) -> ``TokenDelta`` (feeds TTS immediately)
+- ``on_tool_start`` / ``on_tool_end``    -> ``ToolInvoked`` / ``ToolCompleted``
+- a tool's ``interrupt`` (surfaced as a pending interrupt after the stream)
+                                          -> ``ConfirmationRequired`` (turn paused)
+- otherwise                              -> ``TurnComplete``
+- recursion limit hit                    -> ``StepLimitReached``
+
+Resume a paused turn with ``resume_turn(thread_id, approved=...)``.
 """
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
-from dana_agent.actions.gate import ActionGate, GateDecision
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
+
+from dana_agent.actions.gate import ActionGate
 from dana_agent.brain.events import (
     BrainEvent,
     ConfirmationRequired,
@@ -31,163 +34,130 @@ from dana_agent.brain.events import (
     ToolInvoked,
     TurnComplete,
 )
-from dana_agent.brain.state import (
-    AgentState,
-    Checkpointer,
-    InMemoryCheckpointer,
-    PendingConfirmation,
-)
+from dana_agent.brain.graph import AGENT, build_graph
+from dana_agent.brain.tools import ToolSpec, build_gated_tools
 from dana_agent.observability import get_logger
-from dana_agent.providers.base import LLMProvider
-from dana_agent.types import Action, ActionResult, Message, Role, Tool, ToolCall
+from dana_agent.types import Action, Reversibility
 
 log = get_logger(__name__)
+
+
+def _to_text(content: Any) -> str:
+    """Flatten message content (str, or a list of parts as some providers emit)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for piece in content:
+            if isinstance(piece, str):
+                parts.append(piece)
+            elif isinstance(piece, dict) and isinstance(piece.get("text"), str):
+                parts.append(piece["text"])
+        return "".join(parts)
+    return str(content)
 
 
 class Brain:
     def __init__(
         self,
-        llm: LLMProvider,
+        model: BaseChatModel,
         gate: ActionGate,
         *,
         system_prompt: str,
-        tools: list[Tool] | None = None,
+        tools: list[ToolSpec] | None = None,
         max_steps: int = 8,
-        checkpointer: Checkpointer | None = None,
+        checkpointer: Any = None,
     ) -> None:
-        self._llm = llm
         self._gate = gate
-        self._system_prompt = system_prompt
-        self._tools = tools or []
         self._max_steps = max_steps
-        self._checkpointer = checkpointer or InMemoryCheckpointer()
-
-    # -- public API --------------------------------------------------------
+        self._tools = build_gated_tools(tools or [], gate)
+        bound = model.bind_tools(self._tools) if self._tools else model
+        self._graph = build_graph(
+            bound,
+            self._tools,
+            system_prompt=system_prompt,
+            checkpointer=checkpointer or InMemorySaver(),
+        )
 
     async def run_turn(self, user_text: str, *, thread_id: str) -> AsyncIterator[BrainEvent]:
         """Start a turn for ``user_text`` in conversation ``thread_id``."""
-        state = self._checkpointer.load(thread_id) or self._new_state()
-        state.messages.append(Message(Role.USER, user_text))
-        async for event in self._drive(state, thread_id):
+        async for event in self._stream({"messages": [HumanMessage(content=user_text)]}, thread_id):
             yield event
 
     async def resume_turn(self, *, thread_id: str, approved: bool) -> AsyncIterator[BrainEvent]:
-        """Resume a turn paused on a confirmation. Approve executes the pending
-        action; deny records a refusal. Either way the loop then continues."""
-        state = self._checkpointer.load(thread_id)
-        if state is None or state.pending is None:
-            raise RuntimeError(f"no pending confirmation for thread {thread_id!r}")
-        pending = state.pending
-        state.pending = None
-
-        if approved:
-            result = await self._gate.execute(pending.action, pending.reversibility)
-            yield self._completed(pending.call, result)
-            state.messages.append(Message(Role.TOOL, result.output))
-        else:
-            yield ToolCompleted(
-                call_id=pending.call.id,
-                tool=pending.call.name,
-                ok=False,
-                output="refused by user",
-                refused=True,
-            )
-            state.messages.append(Message(Role.TOOL, "refused by user"))
-
-        async for event in self._drive(state, thread_id):
+        """Resume a turn paused on a confirmation with the human's decision."""
+        async for event in self._stream(Command(resume=approved), thread_id):
             yield event
 
-    # -- loop --------------------------------------------------------------
+    async def user_messages(self, thread_id: str) -> list[str]:
+        """The user turns recorded for a conversation (checkpointer memory)."""
+        snapshot = await self._graph.aget_state({"configurable": {"thread_id": thread_id}})
+        messages = snapshot.values.get("messages", []) if snapshot.values else []
+        return [_to_text(m.content) for m in messages if isinstance(m, HumanMessage)]
 
-    async def _drive(self, state: AgentState, thread_id: str) -> AsyncIterator[BrainEvent]:
-        for _step in range(self._max_steps):
-            text_parts: list[str] = []
-            tool_calls: list[ToolCall] = []
-            async for chunk in self._llm.stream(self._prompt(state), self._tools):
-                if chunk.text:
-                    text_parts.append(chunk.text)
-                    yield TokenDelta(chunk.text)
-                tool_calls.extend(chunk.tool_calls)
+    async def _stream(self, graph_input: Any, thread_id: str) -> AsyncIterator[BrainEvent]:
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": self._max_steps,
+        }
+        try:
+            async for ev in self._graph.astream_events(graph_input, config=config, version="v2"):
+                translated = self._translate(ev)
+                if translated is not None:
+                    yield translated
+        except GraphRecursionError:
+            log.warning("step_limit_reached", steps=self._max_steps)
+            yield StepLimitReached(self._max_steps)
+            return
 
-            assistant_text = "".join(text_parts)
+        # Terminal event: paused for confirmation, or turn complete.
+        snapshot = await self._graph.aget_state(config)
+        interrupts = getattr(snapshot, "interrupts", ())
+        if interrupts:
+            payload = interrupts[0].value
+            yield ConfirmationRequired(
+                id=str(interrupts[0].id),
+                tool=payload.get("tool", ""),
+                arguments=payload.get("arguments", {}),
+                reversibility=Reversibility(payload.get("reversibility", "reversible")),
+            )
+            return
+        yield TurnComplete(self._final_text(snapshot))
 
-            if not tool_calls:
-                state.messages.append(Message(Role.ASSISTANT, assistant_text))
-                self._checkpointer.save(thread_id, state)
-                yield TurnComplete(assistant_text.strip())
-                return
-
-            state.messages.append(Message(Role.ASSISTANT, assistant_text))
-            paused = False
-            async for event in self._run_tools(state, thread_id, tool_calls):
-                yield event
-                if isinstance(event, ConfirmationRequired):
-                    paused = True
-            if paused:
-                return  # wait for resume_turn
-
-        log.warning("step_limit_reached", steps=self._max_steps)
-        self._checkpointer.save(thread_id, state)
-        yield StepLimitReached(self._max_steps)
-
-    async def _run_tools(
-        self, state: AgentState, thread_id: str, tool_calls: list[ToolCall]
-    ) -> AsyncIterator[BrainEvent]:
-        for call in tool_calls:
-            action = Action(tool=call.name, arguments=call.arguments)
-            decision, reversibility = self._gate.decide(action)
-
-            if decision is GateDecision.REFUSE:
-                yield ToolCompleted(
-                    call_id=call.id,
-                    tool=call.name,
-                    ok=False,
-                    output="refused: not allowed",
-                    refused=True,
-                )
-                state.messages.append(Message(Role.TOOL, "refused: not allowed"))
-                continue
-
-            if decision is GateDecision.CONFIRM:
-                pending = PendingConfirmation(
-                    id=uuid.uuid4().hex,
-                    call=call,
-                    action=action,
-                    reversibility=reversibility,
-                )
-                state.pending = pending
-                self._checkpointer.save(thread_id, state)
-                yield ConfirmationRequired(
-                    id=pending.id,
-                    tool=call.name,
-                    arguments=call.arguments,
-                    reversibility=reversibility,
-                )
-                return  # first confirmation pauses the turn
-
-            yield ToolInvoked(
-                call_id=call.id,
-                tool=call.name,
-                arguments=call.arguments,
+    def _translate(self, ev: Any) -> BrainEvent | None:
+        kind = ev["event"]
+        if kind == "on_chat_model_stream":
+            if ev.get("metadata", {}).get("langgraph_node") != AGENT:
+                return None
+            text = _to_text(ev["data"]["chunk"].content)
+            return TokenDelta(text) if text else None
+        if kind == "on_tool_start":
+            name = ev.get("name", "")
+            args = ev["data"].get("input") or {}
+            reversibility = self._gate.classify(Action(tool=name, arguments=args))
+            return ToolInvoked(
+                call_id=str(ev.get("run_id", "")),
+                tool=name,
+                arguments=args,
                 reversibility=reversibility,
             )
-            result = await self._gate.execute(action, reversibility)
-            yield self._completed(call, result)
-            state.messages.append(Message(Role.TOOL, result.output))
-
-    # -- helpers -----------------------------------------------------------
-
-    def _prompt(self, state: AgentState) -> list[Message]:
-        return [Message(Role.SYSTEM, self._system_prompt), *state.messages]
-
-    def _new_state(self) -> AgentState:
-        return AgentState()
+        if kind == "on_tool_end":
+            output = ev["data"].get("output")
+            content = _to_text(getattr(output, "content", output))
+            refused = content.startswith("refused")
+            return ToolCompleted(
+                call_id=str(ev.get("run_id", "")),
+                tool=ev.get("name", ""),
+                ok=not refused,
+                output=content,
+                refused=refused,
+            )
+        return None
 
     @staticmethod
-    def _completed(call: ToolCall, result: ActionResult) -> ToolCompleted:
-        return ToolCompleted(
-            call_id=call.id,
-            tool=call.name,
-            ok=result.ok,
-            output=result.output or (result.error or ""),
-        )
+    def _final_text(snapshot: Any) -> str:
+        messages = snapshot.values.get("messages", []) if snapshot.values else []
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and not msg.tool_calls:
+                return _to_text(msg.content).strip()
+        return ""

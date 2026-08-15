@@ -32,11 +32,16 @@ local = [
 wake = [
     "pvporcupine>=3.0",
 ]
-# Phase 4 — brain
+# Phase 4 — brain (LangGraph graph + init_chat_model for provider-swappable LLMs)
 brain = [
     "langgraph>=0.2",
+    "langchain>=0.3",
     "langchain-core>=0.3",
 ]
+# Provider integrations for the brain's chat model (installed as needed).
+brain-openai = ["langchain-openai>=0.2"]
+brain-google = ["langchain-google-genai>=2.0"]
+brain-anthropic = ["langchain-anthropic>=0.2"]
 # Phase 5 — action layer
 actions = [
     "playwright>=1.44",
@@ -56,6 +61,11 @@ dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
+    # Brain deps are part of the dev env so the offline suite runs after a plain
+    # `uv sync --dev` (still offline — no network, just the packages installed).
+    "langgraph>=0.2",
+    "langchain>=0.3",
+    "langchain-core>=0.3",
 ]
 
 [build-system]
@@ -81,6 +91,13 @@ strict = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 files = ["src", "tests"]
+
+# LangChain/LangGraph are large and not fully typed for --strict; treat them as
+# Any at the boundary rather than leaking their internals into our type checks.
+[[tool.mypy.overrides]]
+module = ["langchain.*", "langchain_core.*", "langgraph.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
