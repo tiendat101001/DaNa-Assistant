@@ -1,0 +1,42 @@
+# DaNa agent — example config file. Copy to dana.toml and edit.
+# Precedence: environment > dana.toml > defaults. Secrets belong in .env or the
+# OS secret store, NOT here. dana.toml is gitignored.
+
+language = "en"
+log_level = "INFO"
+
+[wake]
+provider = "mock"        # -> "porcupine" once Phase 2 lands
+phrase = "Hey DaNa"
+end_phrase = "Bye DaNa"
+inactivity_timeout_s = 30.0
+
+[conversation]
+mode = "cascade"
+
+[conversation.stt]
+provider = "mock"        # -> "deepgram"
+model = "mock-stt"
+
+[conversation.llm]
+provider = "mock"        # -> "gemini" | "openai" | "anthropic" | "openai_compat"
+model = "mock-llm"
+temperature = 0.7
+
+[conversation.tts]
+provider = "mock"        # -> "elevenlabs" | "piper"
+voice = "default"
+
+[actions]
+provider = "mock"        # -> "playwright"
+gate_policy = "standard"
+allowed_domains = []
+allowed_apps = []
+
+[control]
+host = "127.0.0.1"
+port = 8760
+
+[privacy]
+local_only = false
+audio_retention = "none"

@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# uv
+.uv/
+
+# Env & secrets — never commit real credentials
+.env
+*.env
+!.env.example
+dana.toml
+!dana.example.toml
+.dana/            # local runtime state: control-token, audit log, checkpoints
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Node / dana-ui
+node_modules/
+dana-ui/dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
