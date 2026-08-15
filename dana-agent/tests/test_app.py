@@ -11,9 +11,11 @@ async def test_build_cascade_stack() -> None:
     assert stack.vad is not None
     assert stack.wake_gate is not None
     assert stack.wake_gate.state.value == "idle"
+    assert stack.gate is not None
     assert stack.stt is not None
     assert stack.llm is not None
     assert stack.tts is not None
+    assert stack.brain is not None
     assert stack.s2s is None
     await stack.aclose()
 
@@ -24,6 +26,7 @@ async def test_build_s2s_stack() -> None:
     assert stack.stt is None
     assert stack.llm is None
     assert stack.tts is None
+    assert stack.brain is None
     await stack.aclose()
 
 

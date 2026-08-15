@@ -1,6 +1,10 @@
-"""Deterministic mock LLM. Echoes the last user message as streamed word
-chunks; if a tool is offered whose name appears in that message, emits a single
-tool call instead. Enough to exercise the brain's routing without a real model.
+"""Deterministic mock LLM, shaped to exercise the brain's agent/tools loop:
+
+- if the most recent message is a TOOL result, answer with final text (this is
+  what lets the loop terminate after a tool runs);
+- else if a tool is offered whose name appears in the last user message, emit a
+  single tool call;
+- otherwise stream a text reply echoing the user.
 """
 
 from __future__ import annotations
@@ -22,7 +26,8 @@ class MockLLM(LLMProvider):
         self, messages: list[Message], tools: list[Tool] | None = None
     ) -> AsyncIterator[LLMChunk]:
         last_user = next((m.content for m in reversed(messages) if m.role is Role.USER), "")
-        if tools:
+        last_is_tool_result = bool(messages) and messages[-1].role is Role.TOOL
+        if tools and not last_is_tool_result:
             hit = next((t for t in tools if t.name in last_user.lower()), None)
             if hit is not None:
                 yield LLMChunk(

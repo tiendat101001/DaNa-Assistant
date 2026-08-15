@@ -93,6 +93,17 @@ class ActionsConfig(ProviderConfig):
     max_actions_per_turn: int = Field(default=10, gt=0)
 
 
+class BrainConfig(BaseModel):
+    """The agent brain (LangGraph-style state graph over the LLM provider)."""
+
+    system_prompt: str = (
+        "You are DaNa, a concise, helpful voice assistant. Answer briefly and "
+        "naturally. Use a tool only when it is needed to act on the user's "
+        "browser or computer."
+    )
+    max_steps: int = Field(default=8, gt=0, le=50)
+
+
 class ControlConfig(BaseModel):
     """Local control API (agent <-> UI). Bound to loopback only in v1."""
 
@@ -126,6 +137,7 @@ class AppConfig(BaseSettings):
     log_level: str = "INFO"
     vad: VADConfig = VADConfig()
     wake: WakeConfig = WakeConfig()
+    brain: BrainConfig = BrainConfig()
     conversation: ConversationConfig = ConversationConfig()
     actions: ActionsConfig = ActionsConfig()
     control: ControlConfig = ControlConfig()

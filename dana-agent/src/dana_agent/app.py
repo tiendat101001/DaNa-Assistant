@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import dana_agent.providers  # noqa: F401  register providers
+from dana_agent.actions import ActionGate
+from dana_agent.brain import Brain
 from dana_agent.capabilities import validate_app_config
 from dana_agent.config import AppConfig
 from dana_agent.observability import get_logger
@@ -40,17 +42,20 @@ log = get_logger(__name__)
 @dataclass(slots=True)
 class AssembledStack:
     """The constructed, validated set of providers for one run. In cascade mode
-    ``s2s`` is None; in s2s mode ``stt``/``llm``/``tts`` are None."""
+    ``s2s`` is None and the brain is present; in s2s mode ``stt``/``llm``/``tts``
+    and the brain are None (the s2s model is its own turn)."""
 
     config: AppConfig
     vad: VADProvider
     wake: WakeWordProvider
     wake_gate: WakeGate
     actions: ActionProvider
+    gate: ActionGate
     stt: STTProvider | None = None
     llm: LLMProvider | None = None
     tts: TTSProvider | None = None
     s2s: S2SProvider | None = None
+    brain: Brain | None = None
 
     async def aclose(self) -> None:
         for provider in (
@@ -72,6 +77,8 @@ def build_stack(cfg: AppConfig) -> AssembledStack:
 
     vad = build_vad(cfg.vad)
     wake = build_wake(cfg.wake)
+    actions = build_actions(cfg.actions)
+    gate = ActionGate(actions, policy=cfg.actions.gate_policy)
     stack = AssembledStack(
         config=cfg,
         vad=vad,
@@ -81,12 +88,19 @@ def build_stack(cfg: AppConfig) -> AssembledStack:
             wake,
             inactivity_timeout_s=cfg.wake.inactivity_timeout_s,
         ),
-        actions=build_actions(cfg.actions),
+        actions=actions,
+        gate=gate,
     )
     if cfg.conversation.mode == "cascade":
         stack.stt = build_stt(cfg.conversation.stt)
         stack.llm = build_llm(cfg.conversation.llm)
         stack.tts = build_tts(cfg.conversation.tts)
+        stack.brain = Brain(
+            stack.llm,
+            gate,
+            system_prompt=cfg.brain.system_prompt,
+            max_steps=cfg.brain.max_steps,
+        )
     else:
         stack.s2s = build_s2s(cfg.conversation.s2s)
 
@@ -101,6 +115,8 @@ def build_stack(cfg: AppConfig) -> AssembledStack:
         tts=cfg.conversation.tts.provider if stack.tts else None,
         s2s=cfg.conversation.s2s.provider if stack.s2s else None,
         actions=cfg.actions.provider,
+        gate_policy=cfg.actions.gate_policy,
+        brain=stack.brain is not None,
         local_only=cfg.privacy.local_only,
     )
     return stack
