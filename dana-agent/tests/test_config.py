@@ -9,7 +9,9 @@ from dana_agent.config import AppConfig
 
 
 def test_defaults_are_all_mock_cascade_english() -> None:
-    cfg = AppConfig()
+    # _env_file=None: bypass the local .env so we see pure code defaults, not
+    # whatever this machine has configured.
+    cfg = AppConfig(_env_file=None)  # type: ignore[call-arg]
     assert cfg.language == "en"
     assert cfg.conversation.mode == "cascade"
     assert cfg.conversation.stt.provider == "mock"

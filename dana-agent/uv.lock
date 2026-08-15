@@ -218,6 +218,22 @@ wheels = [
 ]
 
 [[package]]
+name = "assemblyai"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings", marker = "python_full_version >= '3.14'" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/5d/ebf21b6c8a1ce534c3ae81a5a98ed4bf3183356b19c31e4bb2a27e6160b9/assemblyai-1.0.0.tar.gz", hash = "sha256:da3715e5805594e75927333330127c6c23ad87d17878d69b76f2404658f7dbac", size = 112354, upload-time = "2026-08-14T18:53:18.368Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/57/ca18b4e0dbf3ef7835236fb725f006bc8de60a26162fa9ade7564d0bb843/assemblyai-1.0.0-py3-none-any.whl", hash = "sha256:84fb3ff352aa070315d6d1e67540b3e8a562aacbf94f50f789dab4d8541df722", size = 107172, upload-time = "2026-08-14T18:53:16.95Z" },
+]
+
+[[package]]
 name = "ast-serialize"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -874,6 +890,8 @@ name = "dana-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "assemblyai" },
+    { name = "google-genai" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "structlog" },
@@ -900,6 +918,7 @@ brain-openai = [
 ]
 cloud = [
     { name = "anthropic" },
+    { name = "assemblyai" },
     { name = "deepgram-sdk" },
     { name = "elevenlabs" },
     { name = "google-genai" },
@@ -936,11 +955,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'cloud'", specifier = ">=0.30" },
+    { name = "assemblyai", specifier = ">=1.0.0" },
+    { name = "assemblyai", marker = "extra == 'cloud'", specifier = ">=0.30" },
     { name = "deepgram-sdk", marker = "extra == 'cloud'", specifier = ">=3.0" },
     { name = "elevenlabs", marker = "extra == 'cloud'", specifier = ">=1.0" },
     { name = "fastapi", marker = "extra == 'control'", specifier = ">=0.111" },
     { name = "faster-whisper", marker = "extra == 'local'", specifier = ">=1.0" },
-    { name = "google-genai", marker = "extra == 'cloud'", specifier = ">=0.3" },
+    { name = "google-genai", specifier = ">=1.0" },
+    { name = "google-genai", marker = "extra == 'cloud'", specifier = ">=1.0" },
     { name = "keyring", marker = "extra == 'control'", specifier = ">=25.0" },
     { name = "langchain", marker = "extra == 'brain'", specifier = ">=0.3" },
     { name = "langchain-anthropic", marker = "extra == 'brain-anthropic'", specifier = ">=0.2" },

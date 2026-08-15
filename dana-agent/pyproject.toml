@@ -17,7 +17,8 @@ dependencies = [
 cloud = [
     "pipecat-ai>=0.0.50",
     "deepgram-sdk>=3.0",
-    "google-genai>=0.3",
+    "google-genai>=1.0",
+    "assemblyai>=0.30",
     "openai>=1.30",
     "anthropic>=0.30",
     "elevenlabs>=1.0",
@@ -87,7 +88,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 "tests/**" = ["S101"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 warn_unused_ignores = true
 warn_redundant_casts = true
@@ -98,6 +99,23 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 module = ["langchain.*", "langchain_core.*", "langgraph.*", "aiosqlite.*"]
 ignore_missing_imports = true
+follow_imports = "skip"
+
+# Real provider SDKs — optional extras, stubs absent in CI / offline dev.
+[[tool.mypy.overrides]]
+module = [
+    "assemblyai.*",
+    "google.genai.*",
+    "google.generativeai.*",
+    "sounddevice.*",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+# numpy stubs use 3.12 `type` syntax; skip to avoid false errors on 3.11 target.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+ignore_errors = true
 follow_imports = "skip"
 
 [tool.pytest.ini_options]
