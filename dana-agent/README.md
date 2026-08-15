@@ -54,7 +54,8 @@ One shared settings object is the single source of truth for the whole project:
 
 ```python
 from dana_agent.config import get_settings
-settings = get_settings()   # cached AppConfig, loaded from env > .env / dana.toml > defaults
+
+settings = get_settings()  # cached AppConfig, loaded from env > .env / dana.toml > defaults
 ```
 
 Brain conversation memory is a configurable checkpointer

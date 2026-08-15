@@ -35,6 +35,7 @@ from dana_agent.brain.events import (
     TurnComplete,
 )
 from dana_agent.brain.graph import AGENT, build_graph
+from dana_agent.brain.history import HistoryPolicy
 from dana_agent.brain.tools import ToolSpec, build_gated_tools
 from dana_agent.observability import get_logger
 from dana_agent.types import Action, Reversibility
@@ -67,6 +68,7 @@ class Brain:
         tools: list[ToolSpec] | None = None,
         max_steps: int = 8,
         checkpointer: Any = None,
+        history: HistoryPolicy | None = None,
     ) -> None:
         self._gate = gate
         self._max_steps = max_steps
@@ -77,6 +79,8 @@ class Brain:
             self._tools,
             system_prompt=system_prompt,
             checkpointer=checkpointer or InMemorySaver(),
+            policy=history or HistoryPolicy(),
+            summarizer=model,  # unbound model: summaries don't call tools
         )
 
     async def run_turn(self, user_text: str, *, thread_id: str) -> AsyncIterator[BrainEvent]:

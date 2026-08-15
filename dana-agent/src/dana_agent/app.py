@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import dana_agent.providers  # noqa: F401  register providers
 from dana_agent.actions import ActionGate
-from dana_agent.brain import Brain, build_chat_model, open_checkpointer
+from dana_agent.brain import Brain, HistoryPolicy, build_chat_model, open_checkpointer
 from dana_agent.capabilities import validate_app_config
 from dana_agent.config import AppConfig, get_settings
 from dana_agent.observability import get_logger
@@ -96,6 +96,11 @@ async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
             system_prompt=cfg.brain.system_prompt,
             max_steps=cfg.brain.max_steps,
             checkpointer=checkpointer,
+            history=HistoryPolicy(
+                strategy=cfg.brain.history_strategy,
+                trigger_messages=cfg.brain.history_trigger_messages,
+                keep_last=cfg.brain.history_keep_last,
+            ),
         )
     else:
         stack.s2s = build_s2s(cfg.conversation.s2s)

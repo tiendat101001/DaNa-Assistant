@@ -117,6 +117,15 @@ class BrainConfig(BaseModel):
     max_steps: int = Field(default=8, gt=0, le=50)
     memory: MemoryConfig = MemoryConfig()
 
+    # Long-conversation strategy so context doesn't grow unbounded:
+    #   none      -> send the whole history every turn
+    #   trim      -> send only the last `history_keep_last` messages (default)
+    #   summarize -> once history exceeds `history_trigger_messages`, condense the
+    #                older ones into a running summary and prune them
+    history_strategy: Literal["none", "trim", "summarize"] = "trim"
+    history_trigger_messages: int = Field(default=20, gt=0)
+    history_keep_last: int = Field(default=8, gt=0)
+
 
 class ControlConfig(BaseModel):
     """Local control API (agent <-> UI). Bound to loopback only in v1."""

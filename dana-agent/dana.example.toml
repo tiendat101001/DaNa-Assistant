@@ -29,6 +29,10 @@ voice = "default"
 
 [brain]
 max_steps = 8
+# Long-conversation strategy: "none" | "trim" | "summarize".
+history_strategy = "trim"
+history_trigger_messages = 20
+history_keep_last = 8
 
 [brain.memory]
 backend = "memory"       # "memory" | "sqlite"
