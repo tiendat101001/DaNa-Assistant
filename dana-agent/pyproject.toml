@@ -37,6 +37,7 @@ brain = [
     "langgraph>=0.2",
     "langchain>=0.3",
     "langchain-core>=0.3",
+    "langgraph-checkpoint-sqlite>=2.0",
 ]
 # Provider integrations for the brain's chat model (installed as needed).
 brain-openai = ["langchain-openai>=0.2"]
@@ -95,7 +96,7 @@ files = ["src", "tests"]
 # LangChain/LangGraph are large and not fully typed for --strict; treat them as
 # Any at the boundary rather than leaking their internals into our type checks.
 [[tool.mypy.overrides]]
-module = ["langchain.*", "langchain_core.*", "langgraph.*"]
+module = ["langchain.*", "langchain_core.*", "langgraph.*", "aiosqlite.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 

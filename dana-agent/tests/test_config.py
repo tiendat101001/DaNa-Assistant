@@ -17,6 +17,21 @@ def test_defaults_are_all_mock_cascade_english() -> None:
     assert cfg.conversation.tts.provider == "mock"
     assert cfg.actions.gate_policy == "standard"
     assert cfg.control.host == "127.0.0.1"
+    assert cfg.brain.memory.backend == "memory"
+
+
+def test_get_settings_is_cached() -> None:
+    from dana_agent.config import get_settings
+
+    assert get_settings() is get_settings()
+
+
+def test_memory_backend_is_env_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DANA_BRAIN__MEMORY__BACKEND", "sqlite")
+    monkeypatch.setenv("DANA_BRAIN__MEMORY__SQLITE_PATH", ":memory:")
+    cfg = AppConfig()
+    assert cfg.brain.memory.backend == "sqlite"
+    assert cfg.brain.memory.sqlite_path == ":memory:"
 
 
 def test_env_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -27,6 +27,14 @@ temperature = 0.7
 provider = "mock"        # -> "elevenlabs" | "piper"
 voice = "default"
 
+[brain]
+max_steps = 8
+
+[brain.memory]
+backend = "memory"       # "memory" | "sqlite"
+# For sqlite: a file path (durable across restarts) or ":memory:" (in-memory DB).
+sqlite_path = ".dana/brain.sqlite"
+
 [actions]
 provider = "mock"        # -> "playwright"
 gate_policy = "standard"

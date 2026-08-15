@@ -9,13 +9,14 @@ control API lands in later phases.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 
 import dana_agent.providers  # noqa: F401  register providers
 from dana_agent.actions import ActionGate
-from dana_agent.brain import Brain, build_chat_model
+from dana_agent.brain import Brain, build_chat_model, open_checkpointer
 from dana_agent.capabilities import validate_app_config
-from dana_agent.config import AppConfig
+from dana_agent.config import AppConfig, get_settings
 from dana_agent.observability import get_logger
 from dana_agent.providers.base import (
     ActionProvider,
@@ -55,15 +56,21 @@ class AssembledStack:
     tts: TTSProvider | None = None
     s2s: S2SProvider | None = None
     brain: Brain | None = None
+    _close_checkpointer: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
 
     async def aclose(self) -> None:
         for provider in (self.vad, self.wake, self.actions, self.stt, self.tts, self.s2s):
             if provider is not None:
                 await provider.aclose()
+        if self._close_checkpointer is not None:
+            await self._close_checkpointer()
 
 
-def build_stack(cfg: AppConfig) -> AssembledStack:
-    """Validate the config, then construct every selected provider."""
+async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
+    """Validate the config, then construct every selected provider. Async because
+    the brain's SQLite checkpointer is opened here (it owns an async connection,
+    closed by ``AssembledStack.aclose``). Defaults to the shared settings."""
+    cfg = cfg or get_settings()
     validate_app_config(cfg)
 
     vad = build_vad(cfg.vad)
@@ -81,11 +88,14 @@ def build_stack(cfg: AppConfig) -> AssembledStack:
     if cfg.conversation.mode == "cascade":
         stack.stt = build_stt(cfg.conversation.stt)
         stack.tts = build_tts(cfg.conversation.tts)
+        checkpointer, close_checkpointer = await open_checkpointer(cfg.brain.memory)
+        stack._close_checkpointer = close_checkpointer
         stack.brain = Brain(
             build_chat_model(cfg.conversation.llm),
             gate,
             system_prompt=cfg.brain.system_prompt,
             max_steps=cfg.brain.max_steps,
+            checkpointer=checkpointer,
         )
     else:
         stack.s2s = build_s2s(cfg.conversation.s2s)
@@ -103,6 +113,7 @@ def build_stack(cfg: AppConfig) -> AssembledStack:
         actions=cfg.actions.provider,
         gate_policy=cfg.actions.gate_policy,
         brain=stack.brain is not None,
+        memory=cfg.brain.memory.backend if stack.brain else None,
         local_only=cfg.privacy.local_only,
     )
     return stack

@@ -7,7 +7,7 @@ from dana_agent.config import AppConfig
 
 
 async def test_build_cascade_stack() -> None:
-    stack = build_stack(AppConfig())
+    stack = await build_stack(AppConfig())
     assert stack.vad is not None
     assert stack.wake_gate is not None
     assert stack.wake_gate.state.value == "idle"
@@ -20,11 +20,27 @@ async def test_build_cascade_stack() -> None:
 
 
 async def test_build_s2s_stack() -> None:
-    stack = build_stack(AppConfig.model_validate({"conversation": {"mode": "s2s"}}))
+    stack = await build_stack(AppConfig.model_validate({"conversation": {"mode": "s2s"}}))
     assert stack.s2s is not None
     assert stack.stt is None
     assert stack.tts is None
     assert stack.brain is None
+    await stack.aclose()
+
+
+async def test_build_stack_with_sqlite_memory() -> None:
+    cfg = AppConfig.model_validate(
+        {"brain": {"memory": {"backend": "sqlite", "sqlite_path": ":memory:"}}}
+    )
+    stack = await build_stack(cfg)
+    assert stack.brain is not None
+    await stack.aclose()  # closes the sqlite connection
+
+
+async def test_build_stack_defaults_to_shared_settings() -> None:
+    # No cfg -> uses get_settings(); should assemble a cascade stack.
+    stack = await build_stack()
+    assert stack.brain is not None
     await stack.aclose()
 
 

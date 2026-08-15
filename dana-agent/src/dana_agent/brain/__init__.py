@@ -9,6 +9,7 @@ via ``init_chat_model``; an offline ``MockChatModel`` backs the ``mock`` provide
 """
 
 from dana_agent.brain.agent import Brain
+from dana_agent.brain.checkpointing import open_checkpointer
 from dana_agent.brain.events import (
     BrainEvent,
     ConfirmationRequired,
@@ -36,4 +37,5 @@ __all__ = [
     "build_chat_model",
     "build_gated_tool",
     "build_gated_tools",
+    "open_checkpointer",
 ]

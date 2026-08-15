@@ -11,6 +11,7 @@ e.g. ``DANA_CONVERSATION__STT__PROVIDER=deepgram``, ``DANA_LANGUAGE=vi``.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr
@@ -93,6 +94,18 @@ class ActionsConfig(ProviderConfig):
     max_actions_per_turn: int = Field(default=10, gt=0)
 
 
+class MemoryConfig(BaseModel):
+    """Brain conversation memory (the LangGraph checkpointer).
+
+    - ``memory``  — in-process, non-persistent (LangGraph InMemorySaver).
+    - ``sqlite``  — SQLite-backed; ``sqlite_path`` is a file for durable memory
+      across restarts, or the literal ``":memory:"`` for a SQLite in-memory DB.
+    """
+
+    backend: Literal["memory", "sqlite"] = "memory"
+    sqlite_path: str = ".dana/brain.sqlite"
+
+
 class BrainConfig(BaseModel):
     """The agent brain (LangGraph-style state graph over the LLM provider)."""
 
@@ -102,6 +115,7 @@ class BrainConfig(BaseModel):
         "browser or computer."
     )
     max_steps: int = Field(default=8, gt=0, le=50)
+    memory: MemoryConfig = MemoryConfig()
 
 
 class ControlConfig(BaseModel):
@@ -162,3 +176,13 @@ class AppConfig(BaseSettings):
             TomlConfigSettingsSource(settings_cls),
             file_secret_settings,
         )
+
+
+@lru_cache
+def get_settings() -> AppConfig:
+    """The shared application settings — one cached instance the whole project
+    imports (``from dana_agent.config import get_settings``), loaded from
+    environment > .env / dana.toml > defaults. Cached so every caller sees the
+    same config; call ``get_settings.cache_clear()`` in tests that need a reload.
+    """
+    return AppConfig()

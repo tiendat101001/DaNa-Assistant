@@ -50,6 +50,18 @@ Copy `.env.example` to `.env` (or `dana.example.toml` to `dana.toml`) and edit.
 Every backend is selected by a `provider` key and swapped without touching code.
 Self-hosted / OpenAI-compatible endpoints use `base_url`, not a new provider.
 
+One shared settings object is the single source of truth for the whole project:
+
+```python
+from dana_agent.config import get_settings
+settings = get_settings()   # cached AppConfig, loaded from env > .env / dana.toml > defaults
+```
+
+Brain conversation memory is a configurable checkpointer
+(`DANA_BRAIN__MEMORY__BACKEND`): `memory` (in-process) or `sqlite` with
+`SQLITE_PATH` as a file (durable across restarts) or `":memory:"` (SQLite
+in-memory DB).
+
 ## Adding a provider
 
 1. Implement the capability's ABC in `src/dana_agent/providers/<capability>/<name>.py`.
