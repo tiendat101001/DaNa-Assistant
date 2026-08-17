@@ -1,7 +1,8 @@
-"""AssemblyAI streaming STT — real-time transcription via WebSocket.
+"""AssemblyAI streaming STT — real-time transcription via WebSocket (SDK v1+).
 
-Bridges AssemblyAI's callback-based ``RealtimeTranscriber`` to the
-``STTProvider.stream`` async-iterator contract using an asyncio.Queue.
+Bridges AssemblyAI's asyncio ``AsyncRealTimeTranscriber`` (v1.0 SDK lives in
+``assemblyai.streaming.v3``) to the ``STTProvider.stream`` async-iterator
+contract using an asyncio.Queue.
 """
 
 from __future__ import annotations
@@ -9,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
-from typing import Any
 
 from dana_agent.config import STTConfig
 from dana_agent.providers.base import Capabilities, STTProvider
@@ -21,7 +21,7 @@ _SAMPLE_RATE = 16_000
 
 @register("stt", "assemblyai")
 class AssemblyAISTT(STTProvider):
-    """Real-time STT via AssemblyAI WebSocket API.
+    """Real-time STT via AssemblyAI WebSocket API (SDK ≥ 1.0).
 
     Requires the ``assemblyai`` package (``pip install assemblyai``).
     API key sourced from ``DANA_CONVERSATION__STT__API_KEY`` (never hardcoded).
@@ -39,54 +39,68 @@ class AssemblyAISTT(STTProvider):
             latency_class="realtime",
         )
 
-    async def stream(self, audio: AsyncIterator[AudioFrame]) -> AsyncIterator[Transcript]:
+    async def stream(self, audio: AsyncIterator[AudioFrame]) -> AsyncIterator[Transcript]:  # type: ignore[override]
         try:
-            import assemblyai as aai  # noqa: PLC0415
+            from assemblyai.streaming.v3 import (  # noqa: PLC0415
+                AsyncRealTimeTranscriber,
+                RealTimeEvents,
+            )
+            from assemblyai.streaming.v3.models import RealTimeParameters  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
-                "assemblyai is required for the assemblyai STT provider: "
-                "install dana-agent[cloud] or pip install assemblyai"
+                "assemblyai>=1.0 is required for the assemblyai STT provider: "
+                "install dana-agent[cloud] or pip install 'assemblyai>=1.0'"
             ) from exc
 
         api_key = self._cfg.api_key.get_secret_value() if self._cfg.api_key else None
-        if api_key:
-            aai.settings.api_key = api_key
+        if not api_key:
+            raise ValueError(
+                "DANA_CONVERSATION__STT__API_KEY must be set for the assemblyai STT provider"
+            )
 
         queue: asyncio.Queue[Transcript | BaseException | None] = asyncio.Queue()
-        loop = asyncio.get_event_loop()
 
-        def _on_data(transcript: Any) -> None:
-            if not transcript.text:
+        def _on_turn(_client: object, event: object) -> None:
+            text = getattr(event, "transcript", "")
+            if not text:
                 return
-            # RealtimeFinalTranscript is a subclass of RealtimeTranscript
-            is_final = type(transcript).__name__ == "RealtimeFinalTranscript"
+            is_final = bool(getattr(event, "end_of_turn", False))
+            confidence = getattr(event, "end_of_turn_confidence", None)
             t = Transcript(
-                text=transcript.text,
+                text=text,
                 is_final=is_final,
-                confidence=getattr(transcript, "confidence", None),
+                confidence=confidence,
             )
-            loop.call_soon_threadsafe(queue.put_nowait, t)
+            queue.put_nowait(t)
 
-        def _on_error(error: BaseException) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, error)
+        def _on_error(_client: object, event: object) -> None:
+            msg = getattr(event, "message", str(event))
+            queue.put_nowait(RuntimeError(f"AssemblyAI error: {msg}"))
 
-        transcriber = aai.RealtimeTranscriber(
-            on_data=_on_data,
-            on_error=_on_error,
+        def _on_termination(_client: object, _event: object) -> None:
+            queue.put_nowait(None)  # sentinel: session closed
+
+        transcriber = AsyncRealTimeTranscriber(api_key=api_key)
+        transcriber.on(RealTimeEvents.Turn, _on_turn)
+        transcriber.on(RealTimeEvents.Error, _on_error)
+        transcriber.on(RealTimeEvents.Termination, _on_termination)
+
+        params = RealTimeParameters(
             sample_rate=_SAMPLE_RATE,
+            language_codes=[self._cfg.language_code],
         )
-
-        await asyncio.to_thread(transcriber.connect)
+        await transcriber.connect(params)
 
         async def _feed() -> None:
             try:
                 async for frame in audio:
-                    # Resample if the frame's sample rate differs from 16 kHz;
-                    # for now we trust callers to send compatible audio.
-                    await asyncio.to_thread(transcriber.stream, frame.pcm)
+                    await transcriber.stream(frame.pcm)
             finally:
-                await asyncio.to_thread(transcriber.close)
-                loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
+                await transcriber.disconnect(terminate=True)
+                # If Termination event never fires (e.g. network drop), unblock
+                # the consumer with a fallback sentinel after a short grace period.
+                await asyncio.sleep(2.0)
+                queue.put_nowait(None)
 
         feeder = asyncio.create_task(_feed())
         try:

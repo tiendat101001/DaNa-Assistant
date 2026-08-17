@@ -60,9 +60,11 @@ def test_secrets_are_redacted() -> None:
     assert api_key.get_secret_value() == "super-secret-key"
 
 
-def test_unknown_field_is_rejected() -> None:
-    with pytest.raises(ValidationError):
-        AppConfig.model_validate({"not_a_real_field": True})
+def test_unknown_field_is_ignored() -> None:
+    # extra="ignore" is required so standard vendor env vars (ASSEMBLYAI_API_KEY,
+    # GEMINI_API_KEY, …) don't crash the app; unknown fields are silently dropped.
+    cfg = AppConfig.model_validate({"not_a_real_field": True})
+    assert not hasattr(cfg, "not_a_real_field")
 
 
 def test_out_of_range_sensitivity_rejected() -> None:

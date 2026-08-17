@@ -5,16 +5,20 @@ Precedence: environment > config file (dana.toml) > defaults. Secrets are
 ``SecretStr``, redacted on display. Validated on load; a bad provider name or a
 missing key fails at startup, not at first request (docs/PLAN.md §6).
 
-Env vars use the ``DANA_`` prefix and ``__`` to descend into nested models,
-e.g. ``DANA_CONVERSATION__STT__PROVIDER=deepgram``, ``DANA_LANGUAGE=vi``.
+API keys use well-known names (``ASSEMBLYAI_API_KEY``, ``GEMINI_API_KEY``, …) —
+the same names the vendor SDKs expect, so one variable does double duty.
+App settings use ``DANA_`` prefix with ``__`` for nesting, e.g.
+``DANA_CONVERSATION__STT__PROVIDER=assemblyai``.  The explicit
+``DANA_*__API_KEY`` vars still work and take priority over the standard names.
 """
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -53,6 +57,7 @@ class WakeConfig(ProviderConfig):
 
 class STTConfig(ProviderConfig):
     model: str = "mock-stt"
+    language_code: str = "en"  # propagated from AppConfig.language by _apply_standard_api_keys
 
 
 class LLMConfig(ProviderConfig):
@@ -63,6 +68,12 @@ class LLMConfig(ProviderConfig):
 class TTSConfig(ProviderConfig):
     model: str = "mock-tts"
     voice: str = "default"
+    language_code: str = "en"  # propagated from AppConfig.language
+    # How many sentence boundaries to accumulate before sending one TTS request.
+    #   0 → whole reply in one request (fewest API calls, slightly higher latency)
+    #   1 → one request per sentence (current default, lowest latency, most calls)
+    #   N → one request per N sentences (balance)
+    chunk_sentences: int = Field(default=1, ge=0)
 
 
 class S2SConfig(ProviderConfig):
@@ -153,7 +164,12 @@ class AppConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         toml_file="dana.toml",
-        extra="forbid",
+        # "ignore" (not "forbid") because pydantic-settings v2.3+ also passes
+        # standard vendor env vars (ASSEMBLYAI_API_KEY, GEMINI_API_KEY, …) through
+        # to pydantic as extra fields.  Those are intentional and handled by the
+        # _apply_standard_api_keys model_validator below; forbidding them here
+        # would prevent the app from starting when those vars are set.
+        extra="ignore",
     )
 
     language: Language = "en"
@@ -165,6 +181,73 @@ class AppConfig(BaseSettings):
     actions: ActionsConfig = ActionsConfig()
     control: ControlConfig = ControlConfig()
     privacy: PrivacyConfig = PrivacyConfig()
+
+    @model_validator(mode="after")
+    def _apply_standard_api_keys(self) -> AppConfig:
+        """Fill api_key fields from well-known vendor env var names.
+
+        Standard names (``ASSEMBLYAI_API_KEY``, ``GEMINI_API_KEY``, …) are read
+        only when the explicit ``DANA_*__API_KEY`` form is absent, so the DANA_
+        vars always take priority.  This means a single ``.env`` entry like
+        ``ASSEMBLYAI_API_KEY=xxx`` covers both the STT stage and wake detection
+        without any duplicated variables.
+
+        Mapping:
+          ASSEMBLYAI_API_KEY  → conversation.stt  (if provider=assemblyai)
+                                 wake              (always — wake uses AssemblyAI)
+          DEEPGRAM_API_KEY    → conversation.stt  (if provider=deepgram)
+          GEMINI_API_KEY /
+          GOOGLE_API_KEY      → conversation.tts  (if provider=gemini)
+                                 conversation.llm  (if provider=gemini)
+          ELEVENLABS_API_KEY  → conversation.tts  (if provider=elevenlabs)
+          OPENAI_API_KEY      → conversation.llm  (if provider=openai)
+          ANTHROPIC_API_KEY   → conversation.llm  (if provider=anthropic)
+        """
+
+        def _env(*names: str) -> SecretStr | None:
+            for name in names:
+                v = os.environ.get(name)
+                if v:
+                    return SecretStr(v)
+            return None
+
+        stt = self.conversation.stt
+        tts = self.conversation.tts
+        llm = self.conversation.llm
+        wake = self.wake
+
+        # Propagate top-level language into STT so providers can set the
+        # correct transcription language (better accuracy than auto-detect).
+        if stt.language_code == "en" and self.language != "en":
+            stt.language_code = self.language
+
+        if not stt.api_key:
+            if stt.provider == "assemblyai":
+                stt.api_key = _env("ASSEMBLYAI_API_KEY")
+            elif stt.provider == "deepgram":
+                stt.api_key = _env("DEEPGRAM_API_KEY")
+
+        if tts.language_code == "en" and self.language != "en":
+            tts.language_code = self.language
+
+        if not tts.api_key:
+            if tts.provider == "gemini":
+                tts.api_key = _env("GEMINI_API_KEY", "GOOGLE_API_KEY")
+            elif tts.provider == "elevenlabs":
+                tts.api_key = _env("ELEVENLABS_API_KEY")
+
+        if not llm.api_key:
+            if llm.provider == "gemini":
+                llm.api_key = _env("GEMINI_API_KEY", "GOOGLE_API_KEY")
+            elif llm.provider == "openai":
+                llm.api_key = _env("OPENAI_API_KEY")
+            elif llm.provider == "anthropic":
+                llm.api_key = _env("ANTHROPIC_API_KEY")
+
+        if not wake.api_key:
+            wake.api_key = _env("ASSEMBLYAI_API_KEY")
+
+        return self
 
     @classmethod
     def settings_customise_sources(

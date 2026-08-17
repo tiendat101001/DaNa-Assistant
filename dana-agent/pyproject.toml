@@ -15,7 +15,8 @@ dependencies = [
 [project.optional-dependencies]
 # Phase 3 — real-time engine + cloud conversation providers (latency-first stack)
 cloud = [
-    "pipecat-ai>=0.0.50",
+    "pipecat-ai>=1.0",
+    "pyaudio>=0.2.14",
     "deepgram-sdk>=3.0",
     "google-genai>=1.0",
     "assemblyai>=0.30",
@@ -108,6 +109,11 @@ module = [
     "google.genai.*",
     "google.generativeai.*",
     "sounddevice.*",
+    "pyaudio.*",
+    "pipecat.*",
+    "loguru.*",
+    "elevenlabs.*",
+    "deepgram.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

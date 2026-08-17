@@ -38,6 +38,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
+# Logs
+logs/
+
 # Temporary
 backlog/
 .claude/

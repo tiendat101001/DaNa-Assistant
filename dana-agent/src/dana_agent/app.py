@@ -38,6 +38,20 @@ from dana_agent.wake import WakeGate
 
 log = get_logger(__name__)
 
+# Map language codes to natural-language names the LLM will recognise.
+_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English",
+    "vi": "Vietnamese (Tiếng Việt)",
+}
+
+
+def _effective_system_prompt(base: str, language: str) -> str:
+    """Append a language instruction to the system prompt when not English."""
+    if language == "en":
+        return base
+    lang_name = _LANGUAGE_NAMES.get(language, language)
+    return f"{base}\nAlways reply in {lang_name}. Use natural, conversational tone."
+
 
 @dataclass(slots=True)
 class AssembledStack:
@@ -93,7 +107,7 @@ async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
         stack.brain = Brain(
             build_chat_model(cfg.conversation.llm),
             gate,
-            system_prompt=cfg.brain.system_prompt,
+            system_prompt=_effective_system_prompt(cfg.brain.system_prompt, cfg.language),
             max_steps=cfg.brain.max_steps,
             checkpointer=checkpointer,
             history=HistoryPolicy(

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
 from dana_agent.app import build_stack
 from dana_agent.config import AppConfig
 
@@ -44,7 +48,8 @@ async def test_build_stack_defaults_to_shared_settings() -> None:
     await stack.aclose()
 
 
-def test_cli_main_returns_zero() -> None:
+def test_cli_main_validate_only_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     from dana_agent.__main__ import main
 
+    monkeypatch.setattr(sys, "argv", ["dana_agent", "--validate-only"])
     assert main() == 0
