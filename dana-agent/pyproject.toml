@@ -14,15 +14,19 @@ dependencies = [
 # core framework and its offline test suite install and run with none of them.
 [project.optional-dependencies]
 # Phase 3 — real-time engine + cloud conversation providers (latency-first stack)
+# Upper bounds cap the next major where the research flagged churn risk (Pipecat
+# is the fastest-moving dep; SDK majors can break clients). Floors stay at the
+# APIs we actually call — assemblyai>=1.0 because the wake detector uses the
+# streaming.v3 client. Verified against Aug 2026 latests (Pipecat 1.7, etc.).
 cloud = [
-    "pipecat-ai>=1.0",
-    "pyaudio>=0.2.14",
-    "deepgram-sdk>=3.0",
-    "google-genai>=1.0",
-    "assemblyai>=0.30",
-    "openai>=1.30",
-    "anthropic>=0.30",
-    "elevenlabs>=1.0",
+    "pipecat-ai>=1.0,<2",
+    "pyaudio>=0.2.14,<0.3",
+    "deepgram-sdk>=3.0,<8",
+    "google-genai>=1.0,<3",
+    "assemblyai>=1.0,<2",
+    "openai>=1.30,<3",
+    "anthropic>=0.30,<1",
+    "elevenlabs>=1.0,<3",
 ]
 # Phase 3 — local CPU-only providers (also the local-only privacy mode)
 local = [
@@ -34,27 +38,29 @@ local = [
 wake = [
     "pvporcupine>=3.0",
 ]
-# Phase 4 — brain (LangGraph graph + init_chat_model for provider-swappable LLMs)
+# Phase 4 — brain (LangGraph graph + init_chat_model for provider-swappable LLMs).
+# LangGraph/LangChain churn across 0.x minors → cap the next minor bump.
 brain = [
-    "langgraph>=0.2",
-    "langchain>=0.3",
-    "langchain-core>=0.3",
-    "langgraph-checkpoint-sqlite>=2.0",
+    "langgraph>=0.2,<2",
+    "langchain>=0.3,<2",
+    "langchain-core>=0.3,<2",
+    "langgraph-checkpoint-sqlite>=2.0,<4",
 ]
 # Provider integrations for the brain's chat model (installed as needed).
-brain-openai = ["langchain-openai>=0.2"]
-brain-google = ["langchain-google-genai>=2.0"]
-brain-anthropic = ["langchain-anthropic>=0.2"]
+brain-openai = ["langchain-openai>=0.2,<2"]
+brain-google = ["langchain-google-genai>=2.0,<5"]
+brain-anthropic = ["langchain-anthropic>=0.2,<2"]
 # Phase 5 — action layer
 actions = [
-    "playwright>=1.44",
+    "playwright>=1.44,<2",
 ]
-# Phase 6 — control API + secrets vault
+# Phase 6 — control API + secrets vault + tray. pillow is pystray's image dep.
 control = [
-    "fastapi>=0.111",
-    "uvicorn[standard]>=0.30",
-    "keyring>=25.0",
-    "pystray>=0.19",
+    "fastapi>=0.111,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "keyring>=25.0,<26",
+    "pystray>=0.19,<0.20",
+    "pillow>=10,<13",
 ]
 
 [dependency-groups]
@@ -69,6 +75,11 @@ dev = [
     "langgraph>=0.2",
     "langchain>=0.3",
     "langchain-core>=0.3",
+    # Control-plane test deps: fastapi + httpx are pure-python and let the control
+    # API suite run after a plain `uv sync --dev` — still offline (TestClient /
+    # ASGITransport, no socket bind). uvicorn/pystray stay in the `control` extra.
+    "fastapi>=0.111",
+    "httpx>=0.27",
 ]
 
 [build-system]
@@ -84,9 +95,23 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
-# S101 (assert) is fine in tests; ABC contract checks rely on it.
+# S101 (assert) is fine in tests; ABC contract checks rely on it. S105/S106
+# (hardcoded "password") fire on dummy bearer tokens in the control-API tests.
+# S104 (bind all interfaces) is intentional in the control-exposure guard tests,
+# which assert that a 0.0.0.0/LAN bind is rejected/warned.
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "S104", "S105", "S106"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are constant sentinels, not mutable
+# defaults — the framework requires them in argument defaults.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.Path",
+    "fastapi.Header",
+]
 
 [tool.mypy]
 python_version = "3.13"
@@ -114,6 +139,13 @@ module = [
     "loguru.*",
     "elevenlabs.*",
     "deepgram.*",
+    "playwright.*",
+    # Control-plane runtime deps: uvicorn/pystray/keyring are the `control` extra
+    # and are not installed for the offline suite (imported lazily where used).
+    "uvicorn.*",
+    "pystray.*",
+    "keyring.*",
+    "PIL.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

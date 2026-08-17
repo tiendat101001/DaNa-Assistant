@@ -6,7 +6,21 @@ Phase 4 delivers the reversibility gate + audit log. The concrete browser
 JSONL audit sink land in Phase 5 (TASK-006).
 """
 
-from dana_agent.actions.audit import AuditEntry, AuditLog
+from dana_agent.actions.audit import (
+    AuditEntry,
+    AuditLog,
+    AuditSink,
+    JsonlAuditSink,
+    redact_arguments,
+)
 from dana_agent.actions.gate import ActionGate, GateDecision
 
-__all__ = ["ActionGate", "AuditEntry", "AuditLog", "GateDecision"]
+__all__ = [
+    "ActionGate",
+    "AuditEntry",
+    "AuditLog",
+    "AuditSink",
+    "GateDecision",
+    "JsonlAuditSink",
+    "redact_arguments",
+]

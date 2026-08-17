@@ -27,9 +27,13 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
+from dana_agent.conversation.mute import BotSpeakingGate
 from dana_agent.conversation.processors import (
     BrainProcessor,
+    HalfDuplexGateProcessor,
+    MuteProcessor,
     ProviderTTSProcessor,
+    S2SProcessor,
     WakeGateProcessor,
 )
 from dana_agent.observability import get_logger
@@ -38,6 +42,7 @@ from dana_agent.providers.wake.assemblyai import AssemblyAIWakeDetector
 if TYPE_CHECKING:
     from dana_agent.app import AssembledStack
     from dana_agent.config import AppConfig
+    from dana_agent.conversation.mute import MicGate
 
 log = get_logger(__name__)
 
@@ -157,6 +162,7 @@ def build_cascade_pipeline(
     *,
     session_id: str | None = None,
     bypass_wake_gate: bool = False,
+    mic_gate: MicGate | None = None,
 ) -> tuple[LocalAudioTransport, Pipeline]:
     """Assemble and return the Pipecat cascade pipeline.
 
@@ -165,6 +171,9 @@ def build_cascade_pipeline(
     ``bypass_wake_gate=True`` forwards every audio frame to STT immediately,
     skipping wake-word detection — useful for development without a physical
     microphone or wake word engine.
+
+    ``mic_gate`` (optional) inserts a :class:`MuteProcessor` right after the mic
+    transport so the control plane / tray can hard-mute capture at the source.
     """
     # ----- transport --------------------------------------------------------
     transport = LocalAudioTransport(
@@ -182,19 +191,30 @@ def build_cascade_pipeline(
     # ----- processors -------------------------------------------------------
     wake_gate = _build_wake_gate(cfg, bypass=bypass_wake_gate)
     stt = _build_stt_service(cfg, stack)
-    brain = BrainProcessor(stack.brain, session_id=session_id)  # type: ignore[arg-type]
+
+    # When no_interrupt is enabled, BotSpeakingGate is shared between
+    # BrainProcessor (writer) and HalfDuplexGateProcessor (reader) so the
+    # pipeline head can drop mic frames while TTS is playing.
+    bot_gate: BotSpeakingGate | None = None
+    if cfg.conversation.no_interrupt:
+        bot_gate = BotSpeakingGate()
+        log.info("half_duplex_mode_enabled")
+
+    brain = BrainProcessor(stack.brain, session_id=session_id, bot_gate=bot_gate)  # type: ignore[arg-type]
     tts = _build_tts_service(cfg, stack)
 
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            wake_gate,
-            stt,
-            brain,
-            tts,
-            transport.output(),
-        ]
-    )
+    # Hard mic mute sits at the very head so muted capture never reaches the
+    # wake gate or STT. Omitted entirely when no gate is injected (headless run).
+    # HalfDuplexGateProcessor follows immediately after so bot-speaking audio
+    # is dropped before it reaches the wake gate or STT.
+    stages: list[FrameProcessor] = [transport.input()]
+    if mic_gate is not None:
+        stages.append(MuteProcessor(mic_gate))
+    if bot_gate is not None:
+        stages.append(HalfDuplexGateProcessor(bot_gate))
+    stages += [wake_gate, stt, brain, tts, transport.output()]
+
+    pipeline = Pipeline(stages)
 
     log.info(
         "pipeline_assembled",
@@ -203,6 +223,51 @@ def build_cascade_pipeline(
         bypass_wake=bypass_wake_gate,
         session_id=session_id,
     )
+    return transport, pipeline
+
+
+def build_s2s_pipeline(
+    cfg: AppConfig,
+    stack: AssembledStack,
+    *,
+    session_id: str | None = None,
+    mic_gate: MicGate | None = None,
+) -> tuple[LocalAudioTransport, Pipeline]:
+    """Assemble the speech-to-speech pipeline — the alternative to the cascade.
+
+    A single S2S model owns the whole turn, so there is no wake gate / STT /
+    brain / TTS chain: captured audio flows straight into the provider and its
+    response audio flows to the speakers::
+
+        transport.input() → [MuteProcessor] → S2SProcessor → transport.output()
+
+    Proves the cascade-or-S2S abstraction: selected purely by
+    ``conversation.mode = "s2s"``; the same ``AssembledStack`` carries either an
+    ``s2s`` provider or the cascade providers. The mock S2S makes this
+    constructible offline; a real provider (``openai_realtime``) runs live.
+    """
+    if stack.s2s is None:
+        raise ValueError("S2S provider is not set on the stack (mode must be 's2s')")
+
+    transport = LocalAudioTransport(
+        LocalAudioTransportParams(
+            audio_in_enabled=True,
+            audio_in_sample_rate=_STT_SAMPLE_RATE,
+            audio_in_channels=1,
+            audio_out_enabled=True,
+            audio_out_sample_rate=_TTS_SAMPLE_RATE,
+            audio_out_channels=1,
+            vad_analyzer=SileroVADAnalyzer(),
+        )
+    )
+
+    stages: list[FrameProcessor] = [transport.input()]
+    if mic_gate is not None:
+        stages.append(MuteProcessor(mic_gate))
+    stages += [S2SProcessor(stack.s2s, sample_rate=_STT_SAMPLE_RATE), transport.output()]
+
+    pipeline = Pipeline(stages)
+    log.info("s2s_pipeline_assembled", s2s=cfg.conversation.s2s.provider, session_id=session_id)
     return transport, pipeline
 
 

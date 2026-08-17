@@ -45,6 +45,7 @@ class MockLLM(LLMProvider):
         return Capabilities(
             streaming=True,
             languages=frozenset({"en", "vi"}),
+            self_hosted=True,
             tool_calling=True,
             latency_class="fast",
         )

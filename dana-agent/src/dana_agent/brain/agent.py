@@ -15,11 +15,12 @@ Resume a paused turn with ``resume_turn(thread_id, approved=...)``.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
@@ -36,7 +37,7 @@ from dana_agent.brain.events import (
 )
 from dana_agent.brain.graph import AGENT, build_graph
 from dana_agent.brain.history import HistoryPolicy
-from dana_agent.brain.tools import ToolSpec, build_gated_tools
+from dana_agent.brain.tools import ToolSpec, build_gated_tool
 from dana_agent.observability import get_logger
 from dana_agent.types import Action, Reversibility
 
@@ -65,14 +66,18 @@ class Brain:
         gate: ActionGate,
         *,
         system_prompt: str,
-        tools: list[ToolSpec] | None = None,
+        tools: Sequence[ToolSpec | BaseTool] | None = None,
         max_steps: int = 8,
         checkpointer: Any = None,
         history: HistoryPolicy | None = None,
     ) -> None:
         self._gate = gate
         self._max_steps = max_steps
-        self._tools = build_gated_tools(tools or [], gate)
+        # Accept either ToolSpecs (wrapped by the gate here) or already-gated
+        # BaseTools (built by build_action_tools at the composition root).
+        self._tools: list[BaseTool] = [
+            t if isinstance(t, BaseTool) else build_gated_tool(t, gate) for t in (tools or [])
+        ]
         bound = model.bind_tools(self._tools) if self._tools else model
         self._graph = build_graph(
             bound,
@@ -82,6 +87,14 @@ class Brain:
             policy=history or HistoryPolicy(),
             summarizer=model,  # unbound model: summaries don't call tools
         )
+
+    def set_max_steps(self, max_steps: int) -> None:
+        """Change the per-turn step budget on the live brain (hot-applied from
+        PUT /config). ``_stream`` reads ``self._max_steps`` at the start of each
+        turn, so the new limit applies to the next turn — no restart required."""
+        if max_steps <= 0:
+            raise ValueError(f"max_steps must be positive, got {max_steps}")
+        self._max_steps = max_steps
 
     async def run_turn(self, user_text: str, *, thread_id: str) -> AsyncIterator[BrainEvent]:
         """Start a turn for ``user_text`` in conversation ``thread_id``."""

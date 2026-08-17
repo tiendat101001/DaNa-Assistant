@@ -927,6 +927,7 @@ cloud = [
 control = [
     { name = "fastapi" },
     { name = "keyring" },
+    { name = "pillow" },
     { name = "pystray" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -941,6 +942,8 @@ wake = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fastapi" },
+    { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langgraph" },
@@ -953,38 +956,41 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'cloud'", specifier = ">=0.30" },
-    { name = "assemblyai", marker = "extra == 'cloud'", specifier = ">=0.30" },
-    { name = "deepgram-sdk", marker = "extra == 'cloud'", specifier = ">=3.0" },
-    { name = "elevenlabs", marker = "extra == 'cloud'", specifier = ">=1.0" },
-    { name = "fastapi", marker = "extra == 'control'", specifier = ">=0.111" },
+    { name = "anthropic", marker = "extra == 'cloud'", specifier = ">=0.30,<1" },
+    { name = "assemblyai", marker = "extra == 'cloud'", specifier = ">=1.0,<2" },
+    { name = "deepgram-sdk", marker = "extra == 'cloud'", specifier = ">=3.0,<8" },
+    { name = "elevenlabs", marker = "extra == 'cloud'", specifier = ">=1.0,<3" },
+    { name = "fastapi", marker = "extra == 'control'", specifier = ">=0.111,<1" },
     { name = "faster-whisper", marker = "extra == 'local'", specifier = ">=1.0" },
-    { name = "google-genai", marker = "extra == 'cloud'", specifier = ">=1.0" },
-    { name = "keyring", marker = "extra == 'control'", specifier = ">=25.0" },
-    { name = "langchain", marker = "extra == 'brain'", specifier = ">=0.3" },
-    { name = "langchain-anthropic", marker = "extra == 'brain-anthropic'", specifier = ">=0.2" },
-    { name = "langchain-core", marker = "extra == 'brain'", specifier = ">=0.3" },
-    { name = "langchain-google-genai", marker = "extra == 'brain-google'", specifier = ">=2.0" },
-    { name = "langchain-openai", marker = "extra == 'brain-openai'", specifier = ">=0.2" },
-    { name = "langgraph", marker = "extra == 'brain'", specifier = ">=0.2" },
-    { name = "langgraph-checkpoint-sqlite", marker = "extra == 'brain'", specifier = ">=2.0" },
-    { name = "openai", marker = "extra == 'cloud'", specifier = ">=1.30" },
+    { name = "google-genai", marker = "extra == 'cloud'", specifier = ">=1.0,<3" },
+    { name = "keyring", marker = "extra == 'control'", specifier = ">=25.0,<26" },
+    { name = "langchain", marker = "extra == 'brain'", specifier = ">=0.3,<2" },
+    { name = "langchain-anthropic", marker = "extra == 'brain-anthropic'", specifier = ">=0.2,<2" },
+    { name = "langchain-core", marker = "extra == 'brain'", specifier = ">=0.3,<2" },
+    { name = "langchain-google-genai", marker = "extra == 'brain-google'", specifier = ">=2.0,<5" },
+    { name = "langchain-openai", marker = "extra == 'brain-openai'", specifier = ">=0.2,<2" },
+    { name = "langgraph", marker = "extra == 'brain'", specifier = ">=0.2,<2" },
+    { name = "langgraph-checkpoint-sqlite", marker = "extra == 'brain'", specifier = ">=2.0,<4" },
+    { name = "openai", marker = "extra == 'cloud'", specifier = ">=1.30,<3" },
     { name = "openwakeword", marker = "extra == 'local'", specifier = ">=0.6" },
-    { name = "pipecat-ai", marker = "extra == 'cloud'", specifier = ">=1.0" },
+    { name = "pillow", marker = "extra == 'control'", specifier = ">=10,<13" },
+    { name = "pipecat-ai", marker = "extra == 'cloud'", specifier = ">=1.0,<2" },
     { name = "piper-tts", marker = "extra == 'local'", specifier = ">=1.2" },
-    { name = "playwright", marker = "extra == 'actions'", specifier = ">=1.44" },
+    { name = "playwright", marker = "extra == 'actions'", specifier = ">=1.44,<2" },
     { name = "pvporcupine", marker = "extra == 'wake'", specifier = ">=3.0" },
-    { name = "pyaudio", marker = "extra == 'cloud'", specifier = ">=0.2.14" },
+    { name = "pyaudio", marker = "extra == 'cloud'", specifier = ">=0.2.14,<0.3" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
-    { name = "pystray", marker = "extra == 'control'", specifier = ">=0.19" },
+    { name = "pystray", marker = "extra == 'control'", specifier = ">=0.19,<0.20" },
     { name = "structlog", specifier = ">=24.1" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'control'", specifier = ">=0.30" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'control'", specifier = ">=0.30,<1" },
 ]
 provides-extras = ["cloud", "local", "wake", "brain", "brain-openai", "brain-google", "brain-anthropic", "actions", "control"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastapi", specifier = ">=0.111" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "langchain", specifier = ">=0.3" },
     { name = "langchain-core", specifier = ">=0.3" },
     { name = "langgraph", specifier = ">=0.2" },

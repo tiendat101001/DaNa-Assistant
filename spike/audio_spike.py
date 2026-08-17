@@ -55,21 +55,51 @@ turn_log: list[TurnStats] = []
 # Config (from env — never hardcoded)
 # ---------------------------------------------------------------------------
 
-ASSEMBLYAI_KEY = os.environ.get("ASSEMBLYAI_API_KEY") or os.environ.get(
-    "DANA_CONVERSATION__STT__API_KEY", ""
+# Load .env from CWD (dana-agent/) so keys are available when the script is
+# run as: cd dana-agent && .venv\Scripts\python.exe ..\spike\audio_spike.py
+def _load_dotenv() -> None:
+    dotenv_path = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(dotenv_path):
+        return
+    with open(dotenv_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key and key not in os.environ:  # env vars take precedence
+                os.environ[key] = value
+
+
+_load_dotenv()
+
+ASSEMBLYAI_KEY = (
+    os.environ.get("ASSEMBLYAI_API_KEY")
+    or os.environ.get("DANA_CONVERSATION__STT__API_KEY", "")
 )
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get(
-    "DANA_CONVERSATION__LLM__API_KEY", ""
+GEMINI_KEY = (
+    os.environ.get("GEMINI_API_KEY")
+    or os.environ.get("DANA_CONVERSATION__LLM__API_KEY", "")
 )
 STT_SAMPLE_RATE = 16_000
 TTS_SAMPLE_RATE = 24_000
 CHUNK_MS = 100  # audio capture granularity
-SILENCE_THRESHOLD = 500  # PCM int16 RMS for silence detection
+SILENCE_THRESHOLD = 80   # PCM int16 RMS for silence detection (tune if needed)
 END_OF_SPEECH_SILENCE_MS = 800  # ms of silence before finalising utterance
 MAX_TURNS = 20  # stop after this many turns (for the 20-reply AEC test)
 SYSTEM_PROMPT = (
     "You are DaNa, a concise voice assistant. Answer in 1-2 short sentences."
 )
+
+if not ASSEMBLYAI_KEY:
+    print("ERROR: ASSEMBLYAI_API_KEY or DANA_CONVERSATION__STT__API_KEY not set.", file=sys.stderr)
+    print("       Copy dana-agent/.env.api-key values into dana-agent/.env and re-run.", file=sys.stderr)
+    sys.exit(1)
+if not GEMINI_KEY:
+    print("ERROR: GEMINI_API_KEY or DANA_CONVERSATION__LLM__API_KEY not set.", file=sys.stderr)
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -126,18 +156,27 @@ async def capture_utterance(gate: StubWakeGate) -> bytes:
         callback=_callback,
     )
     with stream:
-        print("[spike] Listening… (speak now)")
+        print(f"[spike] Listening… (speak now)  [threshold={SILENCE_THRESHOLD}]")
+        rms_log_counter = 0
         while True:
             raw = await q.get()
             passed = gate.pass_frame(raw)
             if passed is None:
                 continue
             rms = _rms(passed)
+
+            # Print RMS every ~10 chunks (~1 s) so you can tune the threshold
+            rms_log_counter += 1
+            if rms_log_counter % 10 == 0:
+                bar = "█" * int(rms / 20)
+                marker = " ← SPEECH" if rms > SILENCE_THRESHOLD else ""
+                print(f"[mic] rms={rms:6.1f}  {bar}{marker}")
+
             if rms > SILENCE_THRESHOLD:
                 if not in_speech:
                     in_speech = True
                     silence_count = 0
-                    print("[spike] Speech detected")
+                    print(f"[spike] Speech detected  (rms={rms:.1f})")
                 buf.append(passed)
             elif in_speech:
                 buf.append(passed)
@@ -165,43 +204,58 @@ def _rms(pcm: bytes) -> float:
 
 
 async def transcribe(pcm: bytes) -> str:
-    """Send PCM to AssemblyAI and return the final transcript."""
-    import assemblyai as aai  # noqa: PLC0415
+    """Send PCM to AssemblyAI and return the final transcript (SDK v1+).
 
-    if ASSEMBLYAI_KEY:
-        aai.settings.api_key = ASSEMBLYAI_KEY
+    Design: we wait for the first Turn event with ``end_of_turn=True`` instead
+    of waiting for the server's TerminationEvent.  This avoids a multi-second
+    server-side termination delay and returns as soon as AssemblyAI thinks the
+    speaker has finished.
+    """
+    from assemblyai.streaming.v3 import AsyncRealTimeTranscriber, RealTimeEvents  # noqa: PLC0415
+    from assemblyai.streaming.v3.models import RealTimeParameters  # noqa: PLC0415
 
-    loop = asyncio.get_event_loop()
-    final_text: list[str] = []
-    done = asyncio.Event()
+    # Event set when end_of_turn=True or an error arrives.
+    turn_done: asyncio.Event = asyncio.Event()
+    final_texts: list[str] = []
 
-    def on_data(t: aai.RealtimeTranscript) -> None:
-        if t.text and isinstance(t, aai.RealtimeFinalTranscript):
-            final_text.append(t.text)
-            loop.call_soon_threadsafe(done.set)
+    def _on_turn(_client: object, event: object) -> None:
+        text = getattr(event, "transcript", "")
+        is_final = bool(getattr(event, "end_of_turn", False))
+        if text:
+            label = "[aai final]  " if is_final else "[aai partial]"
+            print(f"  {label} {text}")
+        if is_final:
+            if text:
+                final_texts.append(text)
+            turn_done.set()
 
-    def on_error(e: BaseException) -> None:
-        print(f"[aai] error: {e}", file=sys.stderr)
-        loop.call_soon_threadsafe(done.set)
+    def _on_error(_client: object, event: object) -> None:
+        print(f"[aai] error: {getattr(event, 'message', event)}", file=sys.stderr)
+        turn_done.set()
 
-    tr = aai.RealtimeTranscriber(on_data=on_data, on_error=on_error, sample_rate=STT_SAMPLE_RATE)
-    await asyncio.to_thread(tr.connect)
+    tr = AsyncRealTimeTranscriber(api_key=ASSEMBLYAI_KEY)
+    tr.on(RealTimeEvents.Turn, _on_turn)
+    tr.on(RealTimeEvents.Error, _on_error)
 
-    # Stream audio in 100 ms chunks
-    chunk = STT_SAMPLE_RATE * CHUNK_MS // 1000 * 2  # bytes per chunk
-    for i in range(0, len(pcm), chunk):
-        await asyncio.to_thread(tr.stream, pcm[i : i + chunk])
+    await tr.connect(RealTimeParameters(sample_rate=STT_SAMPLE_RATE))
+
+    # Stream all captured PCM in 100 ms chunks
+    chunk_bytes = STT_SAMPLE_RATE * CHUNK_MS // 1000 * 2
+    for i in range(0, len(pcm), chunk_bytes):
+        await tr.stream(pcm[i : i + chunk_bytes])
         await asyncio.sleep(0)
 
-    # Give AssemblyAI time to finalise
+    # Wait for AssemblyAI to finalise the utterance (end_of_turn=True).
+    # 10 s safety net; in practice the final Turn arrives within 1–2 s after
+    # all audio is sent.
     try:
-        await asyncio.wait_for(done.wait(), timeout=5.0)
+        await asyncio.wait_for(turn_done.wait(), timeout=10.0)
     except asyncio.TimeoutError:
-        pass
-    finally:
-        await asyncio.to_thread(tr.close)
+        print("[aai] timeout waiting for final transcript", file=sys.stderr)
 
-    return " ".join(final_text)
+    # Fast close — no need to wait for the server's TerminationEvent.
+    await tr.disconnect(terminate=False)
+    return " ".join(final_texts)
 
 
 # ---------------------------------------------------------------------------
@@ -352,35 +406,47 @@ async def run_spike() -> None:
         cancel = asyncio.Event()
         play_task = asyncio.create_task(play_audio(audio, cancel))
 
-        # Simple barge-in: capture mic energy during playback; if above threshold, cancel
+        # Barge-in: detect user speech during TTS playback and cancel it.
+        # Uses a higher RMS threshold (300) than capture so TTS bleed-through
+        # and ambient noise below that level don't trigger a false cancel.
+        # A 1.5 s startup delay lets the first syllable of the reply play out
+        # before we start listening for speech.
+        BARGE_THRESHOLD = 300
+
         async def _barge_in_watch() -> None:
+            import contextlib  # noqa: PLC0415
             try:
                 import sounddevice as sd  # noqa: PLC0415
-                import numpy as np  # noqa: PLC0415
                 loop = asyncio.get_event_loop()
                 q: asyncio.Queue[bytes] = asyncio.Queue()
 
                 def _cb(indata: object, frames: int, _t: object, _s: object) -> None:
                     loop.call_soon_threadsafe(q.put_nowait, bytes(indata))  # type: ignore[arg-type]
 
+                # Wait for TTS playback to start before listening for barge-in.
+                await asyncio.sleep(1.5)
                 with sd.RawInputStream(
                     samplerate=STT_SAMPLE_RATE, channels=1, dtype="int16",
                     blocksize=int(STT_SAMPLE_RATE * CHUNK_MS / 1000), callback=_cb
                 ):
                     while not play_task.done():
-                        try:
+                        with contextlib.suppress(asyncio.TimeoutError):
                             raw = await asyncio.wait_for(q.get(), timeout=0.1)
-                            if _rms(raw) > SILENCE_THRESHOLD:
+                            if _rms(raw) > BARGE_THRESHOLD:
+                                print(f"[spike] Barge-in detected  (rms={_rms(raw):.0f})")
                                 cancel.set()
                                 return
-                        except asyncio.TimeoutError:
-                            continue
-            except Exception:
+            except asyncio.CancelledError:
                 pass
+            except Exception as exc:
+                print(f"[barge-in] {exc}", file=sys.stderr)
 
         barge_task = asyncio.create_task(_barge_in_watch())
         await play_task
         barge_task.cancel()
+        import contextlib  # noqa: PLC0415
+        with contextlib.suppress(asyncio.CancelledError):
+            await barge_task
 
     # ---- summary ----
     _print_summary()

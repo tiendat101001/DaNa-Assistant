@@ -40,10 +40,20 @@ backend = "memory"       # "memory" | "sqlite"
 sqlite_path = ".dana/brain.sqlite"
 
 [actions]
-provider = "mock"        # -> "playwright"
-gate_policy = "standard"
-allowed_domains = []
-allowed_apps = []
+provider = "mock"        # "mock" | "browser" (Playwright) | "os" (Windows)
+gate_policy = "standard" # "standard" | "conservative" | "wide"
+# Default-deny allowlists: empty means nothing is navigable / launchable.
+allowed_domains = []     # e.g. ["example.com"] — host-suffix match, http(s) only
+allowed_apps = []        # e.g. ["notepad", "spotify"] — names, never shell strings
+max_actions_per_turn = 10
+# Browser (Playwright) provider — dedicated, disposable profile (NOT real Chrome).
+browser_profile_dir = ".dana/browser-profile"
+browser_storage_state_path = ".dana/browser-state.json"
+browser_headless = false
+# OS (Windows) provider — dangerous, so OFF unless explicitly enabled.
+os_actions_enabled = false
+# Durable append-only JSONL audit trail of every gate decision/execution.
+audit_path = ".dana/audit.jsonl"
 
 [control]
 host = "127.0.0.1"

@@ -21,10 +21,21 @@ from dana_agent.brain.events import (
 )
 from dana_agent.brain.history import HistoryPolicy
 from dana_agent.brain.model import BRAIN_PROVIDERS, MockChatModel, build_chat_model
-from dana_agent.brain.tools import ToolSpec, build_gated_tool, build_gated_tools
+from dana_agent.brain.tools import (
+    BROWSER_TOOLS,
+    OS_TOOLS,
+    ToolArg,
+    ToolSpec,
+    action_tool_specs,
+    build_action_tools,
+    build_gated_tool,
+    build_gated_tools,
+)
 
 __all__ = [
     "BRAIN_PROVIDERS",
+    "BROWSER_TOOLS",
+    "OS_TOOLS",
     "Brain",
     "BrainEvent",
     "ConfirmationRequired",
@@ -32,10 +43,13 @@ __all__ = [
     "MockChatModel",
     "StepLimitReached",
     "TokenDelta",
+    "ToolArg",
     "ToolCompleted",
     "ToolInvoked",
     "ToolSpec",
     "TurnComplete",
+    "action_tool_specs",
+    "build_action_tools",
     "build_chat_model",
     "build_gated_tool",
     "build_gated_tools",

@@ -28,5 +28,6 @@ class MockS2S(S2SProvider):
         return Capabilities(
             streaming=True,
             languages=frozenset({"en", "vi"}),
+            self_hosted=True,
             latency_class="realtime",
         )

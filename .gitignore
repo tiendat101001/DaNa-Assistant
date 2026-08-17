@@ -13,11 +13,15 @@ venv/
 
 # Env & secrets — never commit real credentials
 .env
+.env.*
 *.env
 !.env.example
 dana.toml
 !dana.example.toml
-.dana/            # local runtime state: control-token, audit log, checkpoints
+# local runtime state: control-token, audit log, checkpoints, browser cookies
+# (NOTE: keep this comment on its own line — gitignore has no inline comments,
+#  so a trailing "# ..." would become part of the pattern and match nothing)
+.dana/
 
 # Tooling caches
 .pytest_cache/

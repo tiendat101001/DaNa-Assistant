@@ -14,7 +14,14 @@ from dataclasses import dataclass, field
 
 import dana_agent.providers  # noqa: F401  register providers
 from dana_agent.actions import ActionGate
-from dana_agent.brain import Brain, HistoryPolicy, build_chat_model, open_checkpointer
+from dana_agent.actions.audit import AuditLog, JsonlAuditSink
+from dana_agent.brain import (
+    Brain,
+    HistoryPolicy,
+    build_action_tools,
+    build_chat_model,
+    open_checkpointer,
+)
 from dana_agent.capabilities import validate_app_config
 from dana_agent.config import AppConfig, get_settings
 from dana_agent.observability import get_logger
@@ -90,7 +97,9 @@ async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
     vad = build_vad(cfg.vad)
     wake = build_wake(cfg.wake)
     actions = build_actions(cfg.actions)
-    gate = ActionGate(actions, policy=cfg.actions.gate_policy)
+    # Durable, append-only JSONL audit trail alongside the in-memory snapshot.
+    audit = AuditLog(sink=JsonlAuditSink(cfg.actions.audit_path))
+    gate = ActionGate(actions, policy=cfg.actions.gate_policy, audit=audit)
     stack = AssembledStack(
         config=cfg,
         vad=vad,
@@ -108,6 +117,7 @@ async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
             build_chat_model(cfg.conversation.llm),
             gate,
             system_prompt=_effective_system_prompt(cfg.brain.system_prompt, cfg.language),
+            tools=build_action_tools(cfg.actions, gate),
             max_steps=cfg.brain.max_steps,
             checkpointer=checkpointer,
             history=HistoryPolicy(

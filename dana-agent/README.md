@@ -23,9 +23,51 @@ Delivered:
   **and** an inactivity timeout (deterministic via an injected clock).
 - **Offline test suite** — runs with no network, no secrets, no microphone.
 
-Not yet built (later phases, tracked in [../backlog/](../backlog/)): the Pipecat
-conversation core, real provider backends, the LangGraph brain, the action
-layer, and the FastAPI control API + dashboard.
+Also delivered in later phases: the Pipecat conversation core, real provider
+backends, the LangGraph brain, the action layer, the FastAPI control API +
+dashboard, and Phase 7 hardening (secrets vault, `local_only`, Windows autostart,
+system tray, one S2S provider end to end).
+
+## Hardening (Phase 7)
+
+- **Secrets in the OS vault** — API keys resolve from the Windows Credential
+  Manager (`keyring`) first, then the environment / `.env` (dev only).
+  Precedence: an explicit `DANA_*__API_KEY` > vault > plain env. Manage keys
+  without echoing them to shell history:
+
+  ```bash
+  uv run python -m dana_agent secrets set ASSEMBLYAI_API_KEY   # prompts / reads stdin
+  uv run python -m dana_agent secrets get ASSEMBLYAI_API_KEY
+  uv run python -m dana_agent secrets delete ASSEMBLYAI_API_KEY
+  ```
+
+- **`local_only` privacy mode** (`DANA_PRIVACY__LOCAL_ONLY=true`) — a
+  **construction-time policy**, not an OS firewall. It refuses to *build* any
+  conversation provider that could send audio/text off the machine: every
+  selected provider must have a loopback/private `base_url` **and** advertise
+  `Capabilities.self_hosted`; a cloud provider (or a public `base_url`) fails
+  fast at startup with a `ConfigError`. It cannot stop a dependency that ignores
+  the policy and does not block egress at the OS level — for hard network
+  isolation, use Windows Firewall rules. Under `local_only` the control API is
+  also required to bind to loopback.
+
+- **Windows autostart** (Task Scheduler, logon trigger, least privilege):
+
+  ```bash
+  uv run python -m dana_agent autostart install    # register the logon task (idempotent)
+  uv run python -m dana_agent autostart status
+  uv run python -m dana_agent autostart uninstall
+  ```
+
+- **System tray** (with `--control`) — mute/unmute the mic (a real hard mute at
+  the capture source), open the dashboard, quit. Needs the `control` extra
+  (`pystray` + `pillow`); absent, the control API still runs headless.
+
+- **Speech-to-speech** — set `DANA_CONVERSATION__MODE=s2s`. The `mock` S2S proves
+  the path offline; `openai_realtime` is the reference cloud provider (live).
+
+See [../docs/RUNBOOK.md](../docs/RUNBOOK.md) for install, autostart, tray, the
+`local_only` walkthrough, and the manual soak / reboot procedures.
 
 ## Setup
 

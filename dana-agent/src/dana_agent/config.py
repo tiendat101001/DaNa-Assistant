@@ -14,7 +14,6 @@ App settings use ``DANA_`` prefix with ``__`` for nesting, e.g.
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 from typing import Literal
 
@@ -25,6 +24,8 @@ from pydantic_settings import (
     SettingsConfigDict,
     TomlConfigSettingsSource,
 )
+
+from dana_agent.secrets import resolve_secret
 
 Language = Literal["en", "vi"]
 
@@ -89,6 +90,10 @@ class ConversationConfig(BaseModel):
     speech-to-speech model. Default to cascade (docs/PLAN.md §6)."""
 
     mode: Literal["cascade", "s2s"] = "cascade"
+    # When True the mic is gated off while the bot is speaking so the bot's
+    # own TTS audio cannot loop back into STT and be treated as user input.
+    # Trades lower perceived latency (no barge-in) for echo safety.
+    no_interrupt: bool = False
     stt: STTConfig = STTConfig()
     llm: LLMConfig = LLMConfig()
     tts: TTSConfig = TTSConfig()
@@ -97,12 +102,35 @@ class ConversationConfig(BaseModel):
 
 class ActionsConfig(ProviderConfig):
     """Action layer selection plus the allowlists and gate policy that bound
-    it (safe-computer-use skill)."""
+    it (safe-computer-use skill).
+
+    Safe defaults: OS actions are OFF, and both allowlists are EMPTY — an empty
+    allowlist is default-deny (nothing is navigable / launchable) so a fresh
+    install can act on nothing until the user opts specific targets in.
+    """
 
     allowed_domains: list[str] = Field(default_factory=list)
     allowed_apps: list[str] = Field(default_factory=list)
     gate_policy: Literal["standard", "conservative", "wide"] = "standard"
     max_actions_per_turn: int = Field(default=10, gt=0)
+
+    # --- browser (Playwright) provider ---
+    # Dedicated, disposable profile dir — NEVER the user's real Chrome profile.
+    browser_profile_dir: str = ".dana/browser-profile"
+    # Portable auth blob exported on close (contains live cookies → treat as a
+    # secret; lives under .dana/ which is gitignored).
+    browser_storage_state_path: str = ".dana/browser-state.json"
+    # Visible by default so the user can watch and trust what the agent does.
+    browser_headless: bool = False
+
+    # --- OS (Windows) provider ---
+    # Bounded OS control is dangerous → OFF by default. Even when the provider is
+    # selected, execution is refused unless this is explicitly enabled.
+    os_actions_enabled: bool = False
+
+    # --- audit ---
+    # Durable append-only JSONL sink for every gate decision/execution.
+    audit_path: str = ".dana/audit.jsonl"
 
 
 class MemoryConfig(BaseModel):
@@ -141,10 +169,16 @@ class BrainConfig(BaseModel):
 class ControlConfig(BaseModel):
     """Local control API (agent <-> UI). Bound to loopback only in v1."""
 
+    # Off by default: the agent runs headless with zero control-plane overhead
+    # and no fastapi/uvicorn import unless this is enabled (or --control passed).
+    enabled: bool = False
     host: str = "127.0.0.1"
     port: int = Field(default=8760, gt=0, lt=65536)
     # Path to the local bearer-token file (not a secret value itself).
     token_path: str = ".dana/control-token"  # noqa: S105
+    # Directory holding the built dana-ui bundle to serve in production. When it
+    # exists the control app mounts it at "/"; in dev the UI runs under Vite.
+    ui_dist_dir: str = "../dana-ui/dist"
 
 
 class PrivacyConfig(BaseModel):
@@ -205,8 +239,14 @@ class AppConfig(BaseSettings):
         """
 
         def _env(*names: str) -> SecretStr | None:
+            # resolve_secret consults the OS credential vault (keyring) first,
+            # then os.environ (which already includes anything from .env). The
+            # explicit DANA_*__API_KEY form still wins — it is parsed by
+            # pydantic-settings before this validator runs and we only fill a
+            # key that is still unset. So precedence is:
+            #   DANA_*__API_KEY  >  keyring  >  plain env / .env
             for name in names:
-                v = os.environ.get(name)
+                v = resolve_secret(name)
                 if v:
                     return SecretStr(v)
             return None

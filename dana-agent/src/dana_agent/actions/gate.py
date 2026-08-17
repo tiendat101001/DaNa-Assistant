@@ -51,6 +51,19 @@ class ActionGate:
     def audit(self) -> AuditLog:
         return self._audit
 
+    @property
+    def policy(self) -> str:
+        return self._policy
+
+    def set_policy(self, policy: str) -> None:
+        """Change the gate policy on the live gate (hot-applied from PUT /config).
+
+        ``decide`` re-reads ``self._policy`` on every action, so a change here
+        takes effect on the very next gated action — no restart required."""
+        if policy not in _CONFIRM_UNDER:
+            raise ValueError(f"unknown gate policy {policy!r}")
+        self._policy = policy
+
     def classify(self, action: Action) -> Reversibility:
         """Reversibility of an action, without recording an audit entry (for
         labelling UI/events). Use ``decide`` for the gated, audited decision."""

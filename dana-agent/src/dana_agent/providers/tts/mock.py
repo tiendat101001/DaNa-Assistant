@@ -28,4 +28,9 @@ class MockTTS(TTSProvider):
 
     @property
     def capabilities(self) -> Capabilities:
-        return Capabilities(streaming=True, languages=frozenset({"en", "vi"}), latency_class="fast")
+        return Capabilities(
+            streaming=True,
+            languages=frozenset({"en", "vi"}),
+            self_hosted=True,
+            latency_class="fast",
+        )

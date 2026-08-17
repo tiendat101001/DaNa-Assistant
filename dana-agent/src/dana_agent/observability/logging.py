@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime
 import logging
 import sys
+from collections.abc import Callable, MutableMapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -27,6 +28,63 @@ import structlog
 
 # logs/ relative to CWD — always correct when invoked from dana-agent/
 _LOG_DIR = Path.cwd() / "logs"
+
+# Optional structlog->EventBus tap. The control plane installs a sink here so
+# structlog-emitted `latency` and `action_audit` events reach the WS stream
+# WITHOUT the pipeline ever importing the control package. None by default →
+# zero overhead and no behaviour change when control is off.
+_EVENT_SINK: Callable[[MutableMapping[str, Any]], None] | None = None
+
+
+def set_event_sink(sink: Callable[[MutableMapping[str, Any]], None] | None) -> None:
+    """Install (or clear) the structlog event tap used by the control plane."""
+    global _EVENT_SINK
+    _EVENT_SINK = sink
+
+
+def _forward_events(
+    _logger: object, _method: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """structlog processor: mirror events to the control EventBus, never mutating
+    or dropping the log record. Best-effort — a sink error must not break logging."""
+    sink = _EVENT_SINK
+    if sink is not None:
+        try:
+            sink(event_dict)
+        except Exception:  # noqa: BLE001, S110 — logging must never crash on the tap
+            pass
+    return event_dict
+
+
+# Events whose ``text`` field carries user/assistant transcript PII. The live
+# control bus receives the full text (``_forward_events`` runs in the shared
+# chain BEFORE the per-sink renderers below, feeding the loopback dashboard), but
+# the durable log outputs must NOT persist it: this module's contract and
+# docs/PLAN.md §7/§8 say never write PII/transcripts to the logs. So the rendered
+# console/file sinks redact ``text`` for these events.
+_PII_TEXT_EVENTS = frozenset({"brain_turn_start", "transcript_final", "assistant_turn"})
+
+
+def _redact_pii(event_dict: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    """Return the record with transcript/assistant ``text`` redacted. Never
+    mutates the shared dict — the bus already saw the original upstream."""
+    if event_dict.get("event") in _PII_TEXT_EVENTS and event_dict.get("text"):
+        redacted = dict(event_dict)
+        redacted["text"] = "[redacted]"
+        return redacted
+    return event_dict
+
+
+def _redacting_renderer(inner: structlog.typing.Processor) -> structlog.typing.Processor:
+    """Wrap a terminal renderer so it redacts transcript PII first. Applied to the
+    console and file sinks; the EventBus tap upstream keeps the full text."""
+
+    def _render(
+        logger: object, method: str, event_dict: MutableMapping[str, Any]
+    ) -> Any:
+        return inner(logger, method, _redact_pii(event_dict))
+
+    return _render
 
 
 def _log_file() -> Path:
@@ -56,6 +114,7 @@ def configure_logging(level: str = "INFO", *, json_logs: bool | None = None) -> 
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
+        _forward_events,  # tap events to the control EventBus (no-op if unset)
         structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
     ]
 
@@ -70,7 +129,7 @@ def configure_logging(level: str = "INFO", *, json_logs: bool | None = None) -> 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(int_level)
     console_handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(processor=console_renderer)
+        structlog.stdlib.ProcessorFormatter(processor=_redacting_renderer(console_renderer))
     )
 
     # ------------------------------------------------------------------
@@ -79,7 +138,9 @@ def configure_logging(level: str = "INFO", *, json_logs: bool | None = None) -> 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(int_level)
     file_handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(processor=structlog.processors.JSONRenderer())
+        structlog.stdlib.ProcessorFormatter(
+            processor=_redacting_renderer(structlog.processors.JSONRenderer())
+        )
     )
 
     # ------------------------------------------------------------------

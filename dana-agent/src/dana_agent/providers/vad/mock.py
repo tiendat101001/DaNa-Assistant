@@ -21,4 +21,4 @@ class MockVAD(VADProvider):
 
     @property
     def capabilities(self) -> Capabilities:
-        return Capabilities(streaming=True, languages=frozenset({"en", "vi"}))
+        return Capabilities(streaming=True, languages=frozenset({"en", "vi"}), self_hosted=True)

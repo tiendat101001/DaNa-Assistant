@@ -33,12 +33,13 @@ from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from dana_agent.conversation.pipeline import build_cascade_pipeline
+from dana_agent.conversation.pipeline import build_cascade_pipeline, build_s2s_pipeline
 from dana_agent.observability import get_logger
 
 if TYPE_CHECKING:
     from dana_agent.app import AssembledStack
     from dana_agent.config import AppConfig
+    from dana_agent.conversation.mute import MicGate
 
 log = get_logger(__name__)
 
@@ -123,21 +124,36 @@ class ConversationSession:
         stack: AssembledStack,
         *,
         bypass_wake_gate: bool = False,
+        mic_gate: MicGate | None = None,
     ) -> None:
         self._cfg = cfg
         self._stack = stack
         self._bypass_wake_gate = bypass_wake_gate
+        self._mic_gate = mic_gate
         self._session_id = str(uuid.uuid4())
         self._runner: WorkerRunner | None = None
 
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
     async def run(self) -> None:
         """Build and run the pipeline until it ends or ``stop()`` is called."""
-        _, pipeline = build_cascade_pipeline(
-            self._cfg,
-            self._stack,
-            session_id=self._session_id,
-            bypass_wake_gate=self._bypass_wake_gate,
-        )
+        if self._cfg.conversation.mode == "s2s":
+            _, pipeline = build_s2s_pipeline(
+                self._cfg,
+                self._stack,
+                session_id=self._session_id,
+                mic_gate=self._mic_gate,
+            )
+        else:
+            _, pipeline = build_cascade_pipeline(
+                self._cfg,
+                self._stack,
+                session_id=self._session_id,
+                bypass_wake_gate=self._bypass_wake_gate,
+                mic_gate=self._mic_gate,
+            )
 
         worker = PipelineWorker(
             pipeline,

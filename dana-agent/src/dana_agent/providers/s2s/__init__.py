@@ -1,1 +1,1 @@
-from dana_agent.providers.s2s import mock  # noqa: F401  (registration)
+from dana_agent.providers.s2s import mock, openai_realtime  # noqa: F401  (registration)

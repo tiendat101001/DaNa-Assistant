@@ -56,8 +56,10 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from dana_agent.brain.agent import Brain
 from dana_agent.brain.events import ConfirmationRequired, TokenDelta
+from dana_agent.conversation.mute import BotSpeakingGate, MicGate
 from dana_agent.observability import get_logger
-from dana_agent.providers.base import TTSProvider
+from dana_agent.providers.base import S2SProvider, TTSProvider
+from dana_agent.types import AudioFrame
 
 if TYPE_CHECKING:
     from dana_agent.providers.wake.assemblyai import AssemblyAIWakeDetector
@@ -66,6 +68,66 @@ log = get_logger(__name__)
 
 # Sentence boundary pattern: flush text to TTS when these appear.
 _SENTENCE_END = re.compile(r"[.!?。！？…\n]")
+
+
+# ---------------------------------------------------------------------------
+# MuteProcessor
+# ---------------------------------------------------------------------------
+
+
+class HalfDuplexGateProcessor(FrameProcessor):
+    """Drops mic audio while the bot is speaking (half-duplex / no-interrupt mode).
+
+    Sits at the head of the pipeline, right after :class:`MuteProcessor`.
+    When :class:`~dana_agent.conversation.mute.BotSpeakingGate` signals that
+    the bot has started speaking, ``InputAudioRawFrame`` and the VAD boundary
+    frames derived from it are silently dropped so the bot's own audio output
+    cannot reach the wake gate or STT and be mistaken for new user input.
+
+    Only inserted into the pipeline when ``DANA_CONVERSATION__NO_INTERRUPT=true``.
+    """
+
+    def __init__(self, gate: BotSpeakingGate, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._gate = gate
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if self._gate.speaking and isinstance(
+            frame,
+            (InputAudioRawFrame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame),
+        ):
+            return  # bot is speaking — drop mic frames to prevent loopback
+        await self.push_frame(frame, direction)
+
+
+class MuteProcessor(FrameProcessor):
+    """Hard mic mute at the head of the pipeline (docs/PLAN.md §8).
+
+    Sits immediately after ``transport.input()``. While the shared
+    :class:`~dana_agent.conversation.mute.MicGate` is muted, every
+    ``InputAudioRawFrame`` (and the VAD speech-boundary frames derived from it)
+    is dropped here, so no captured audio ever reaches the wake gate, STT, the
+    brain, or any provider. All non-capture frames pass through untouched, so the
+    pipeline still shuts down and plays queued output normally while muted.
+    """
+
+    def __init__(self, gate: MicGate, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._gate = gate
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if self._gate.muted and isinstance(
+            frame,
+            (
+                InputAudioRawFrame,
+                VADUserStartedSpeakingFrame,
+                VADUserStoppedSpeakingFrame,
+            ),
+        ):
+            return  # drop capture at the source — a real gate, not a flag
+        await self.push_frame(frame, direction)
 
 
 # ---------------------------------------------------------------------------
@@ -204,11 +266,19 @@ class BrainProcessor(FrameProcessor):
     An ``InterruptionFrame`` cancels any in-flight turn immediately.
     """
 
-    def __init__(self, brain: Brain, session_id: str | None = None, **kwargs: object) -> None:
+    def __init__(
+        self,
+        brain: Brain,
+        session_id: str | None = None,
+        *,
+        bot_gate: BotSpeakingGate | None = None,
+        **kwargs: object,
+    ) -> None:
         super().__init__(**kwargs)
         self._brain = brain
         self._session_id = session_id or str(uuid.uuid4())
         self._turn_task: asyncio.Task[None] | None = None
+        self._bot_gate = bot_gate
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -218,6 +288,10 @@ class BrainProcessor(FrameProcessor):
             if not text:
                 return
             log.info("brain_turn_start", text=text, session=self._session_id)
+            # Neutral event tap (carry-over B): the final user transcript. The
+            # control log-bridge republishes this as a `transcript_final` WS event
+            # WITHOUT this module importing the control plane.
+            log.info("transcript_final", text=text, role="user", session=self._session_id)
             await self._cancel_turn()
             self._turn_task = asyncio.ensure_future(self._run_turn(text))
 
@@ -242,23 +316,49 @@ class BrainProcessor(FrameProcessor):
         self._turn_task = None
 
     async def _run_turn(self, user_text: str) -> None:
+        if self._bot_gate is not None:
+            self._bot_gate.set_speaking(True)
         await self.push_frame(BotStartedSpeakingFrame())
         await self.push_frame(LLMFullResponseStartFrame())
+        reply_parts: list[str] = []
         try:
             async for event in self._brain.run_turn(user_text, thread_id=self._session_id):
                 if isinstance(event, TokenDelta) and event.text:
+                    reply_parts.append(event.text)
                     await self.push_frame(LLMTextFrame(text=event.text))
                 elif isinstance(event, ConfirmationRequired):
-                    log.info("confirmation_required", tool=event.tool, id=event.id)
-                    # TODO(TASK-006): surface voice/UI confirmation request
+                    # Neutral event tap (carry-over B): the log-bridge maps this to
+                    # a `confirmation_request` WS event so the dashboard sees the
+                    # pending destructive action. Arguments are redacted before
+                    # logging so secrets never reach the durable trail or WS stream.
+                    from dana_agent.actions.audit import redact_arguments  # noqa: PLC0415
+
+                    safe_args = redact_arguments(dict(event.arguments))
+                    preview = f"{event.tool}({', '.join(f'{k}={v!r}' for k, v in safe_args.items())})"
+                    log.info(
+                        "confirmation_required",
+                        tool=event.tool,
+                        id=event.id,
+                        reversibility=event.reversibility.value,
+                        args_resolved=safe_args,
+                        preview=preview,
+                        session=self._session_id,
+                    )
         except asyncio.CancelledError:
             log.debug("brain_turn_cancelled")
             raise
         except Exception as exc:
             log.exception("brain_turn_error", exc_info=exc)
         finally:
+            reply = "".join(reply_parts).strip()
+            if reply:
+                # Neutral event tap (carry-over B): the assistant's spoken reply →
+                # `assistant_turn` WS event via the log-bridge.
+                log.info("assistant_turn", text=reply, session=self._session_id)
             await self.push_frame(LLMFullResponseEndFrame())
             await self.push_frame(BotStoppedSpeakingFrame())
+            if self._bot_gate is not None:
+                self._bot_gate.set_speaking(False)
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +383,9 @@ class ProviderTTSProcessor(FrameProcessor):
       request count.
     """
 
-    def __init__(self, provider: TTSProvider, *, chunk_sentences: int = 1, **kwargs: object) -> None:
+    def __init__(
+        self, provider: TTSProvider, *, chunk_sentences: int = 1, **kwargs: object
+    ) -> None:
         super().__init__(**kwargs)
         self._provider = provider
         self._chunk_sentences = chunk_sentences
@@ -374,3 +476,83 @@ class ProviderTTSProcessor(FrameProcessor):
             if sentence is None:
                 break
             yield sentence
+
+
+# ---------------------------------------------------------------------------
+# S2SProcessor  (speech-to-speech mode)
+# ---------------------------------------------------------------------------
+
+
+class S2SProcessor(FrameProcessor):
+    """Bridges an ``S2SProvider`` into the pipecat frame protocol for the
+    speech-to-speech pipeline (the alternative to the STT+brain+TTS cascade).
+
+    Captured ``InputAudioRawFrame`` bytes are handed to the provider's
+    ``stream()`` as neutral :class:`~dana_agent.types.AudioFrame`s; each response
+    :class:`~dana_agent.types.AudioChunk` is emitted downstream as a
+    ``TTSAudioRawFrame`` for the output transport. This mirrors
+    :class:`ProviderTTSProcessor` but for a single speech-to-speech model — the
+    provider owns the whole turn (STT + reasoning + TTS) internally.
+
+    The mock S2S provider makes this fully offline-constructible; a real provider
+    (``openai_realtime``) opens a live session and is exercised only under the
+    ``live`` marker.
+    """
+
+    def __init__(
+        self, provider: S2SProvider, *, sample_rate: int = 16_000, **kwargs: object
+    ) -> None:
+        super().__init__(**kwargs)
+        self._provider = provider
+        self._sample_rate = sample_rate
+        self._audio_queue: asyncio.Queue[AudioFrame | None] = asyncio.Queue()
+        self._task: asyncio.Task[None] | None = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, InputAudioRawFrame):
+            if self._task is None:
+                self._task = asyncio.ensure_future(self._run())
+            await self._audio_queue.put(
+                AudioFrame(pcm=frame.audio, sample_rate=self._sample_rate)
+            )
+
+        elif isinstance(frame, (InterruptionFrame, CancelFrame, EndFrame)):
+            await self._stop()
+            await self.push_frame(frame, direction)
+
+        else:
+            await self.push_frame(frame, direction)
+
+    async def _stop(self) -> None:
+        await self._audio_queue.put(None)
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception) as exc:  # noqa: BLE001
+                log.debug("s2s_cancel_swallowed", exc=str(exc))
+        self._task = None
+
+    async def _run(self) -> None:
+        try:
+            async for chunk in self._provider.stream(self._audio_iter()):
+                await self.push_frame(
+                    TTSAudioRawFrame(
+                        audio=chunk.pcm,
+                        sample_rate=chunk.sample_rate,
+                        num_channels=1,
+                    )
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.exception("s2s_error", exc_info=exc)
+
+    async def _audio_iter(self) -> AsyncIterator[AudioFrame]:
+        while True:
+            frame = await self._audio_queue.get()
+            if frame is None:
+                break
+            yield frame
