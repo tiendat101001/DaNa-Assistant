@@ -10,13 +10,15 @@ LLM, TTS, wake detection, actions — is swappable from config with no code chan
 ```
 mic → Silero VAD → AssemblyAI wake detection
     → AssemblyAI STT → LangGraph brain (Gemini) → Gemini TTS → speaker
+
+control API (127.0.0.1:8760) → Talk UI + dashboard (served by the agent)
 ```
 
 ## Repository layout
 
 ```
 dana-agent/   Python agent process (this is what you run)
-dana-ui/      React dashboard (Phase 6, not yet started)
+dana-ui/      React Talk UI + dashboard (built bundle served by the agent)
 docs/         Architecture decisions and the phased roadmap
 backlog/      Task-level tracking, one file per feature
 ```
@@ -30,6 +32,7 @@ backlog/      Task-level tracking, one file per feature
 | Python | ≥ 3.11 | 3.13 recommended |
 | uv | any recent | replaces pip + venv |
 | pre-commit | any recent | optional — `uv tool install pre-commit && pre-commit install` for the same lint/type/secret gates locally |
+| Node.js | ≥ 20 | optional — only for developing the UI (`npm run dev`); the agent serves the pre-built bundle otherwise |
 | Microphone | — | any Windows audio input device |
 
 **Install uv on Windows** (PowerShell, one-time):
@@ -97,7 +100,41 @@ See [`.env.example`](dana-agent/.env.example) for the full list of options.
 
 ## Running
 
-### 1 — Validate config (no keys, no mic needed)
+### 1 — Talk UI (recommended)
+
+The agent hosts the dashboard itself — voice conversation, live transcript,
+confirmations, typed fallback, all in the browser:
+
+```bash
+cd dana-agent
+uv run python -m dana_agent --control
+```
+
+1. Open **http://127.0.0.1:8760** (the startup log prints the URL).
+2. First login only: paste the bearer token from `dana-agent/.dana/control-token`
+   (auto-generated on first start; the browser remembers it).
+3. On the **🎙 Talk** tab, press **Talk** and just speak — no wake phrase needed.
+   Or type in the message box; DaNa answers out loud either way.
+
+The same command runs the full voice pipeline (wake-gated for hands-free use)
+plus the control API. The **🛠 Dashboard** tab has config editing, the latency
+waterfall, and the action audit trail. Stop with **Ctrl+C**.
+
+Make it permanent with `DANA_CONTROL__ENABLED=true` in `.env` — then plain
+`uv run python -m dana_agent` starts it too.
+
+**UI development mode** (hot reload; only when changing UI code) — keep the
+agent running in one terminal, then:
+
+```bash
+cd dana-ui
+npm install
+npm run dev        # http://localhost:5173, proxies /api to the agent
+```
+
+After UI changes, refresh the agent-served bundle with `npm run build`.
+
+### 2 — Validate config (no keys, no mic needed)
 
 Checks that providers can be assembled from the current config and exits. Good for
 CI or confirming a new `.env` is wired correctly.
@@ -107,7 +144,7 @@ cd dana-agent
 uv run python -m dana_agent --validate-only
 ```
 
-### 2 — Development mode (skip wake phrase)
+### 3 — Development mode (CLI, skip wake phrase)
 
 Bypasses wake-word detection — every mic frame goes straight to STT. Speak freely
 without saying "Hey DaNa" first. Requires `ASSEMBLYAI_API_KEY` + `GEMINI_API_KEY`.
@@ -116,7 +153,7 @@ without saying "Hey DaNa" first. Requires `ASSEMBLYAI_API_KEY` + `GEMINI_API_KEY
 uv run python -m dana_agent --bypass-wake
 ```
 
-### 3 — Full mode (wake-phrase gated)
+### 4 — Full mode (wake-phrase gated, no UI)
 
 ```bash
 uv run python -m dana_agent
@@ -149,13 +186,46 @@ uv run python -m dana_agent --validate-only
 | Stage | Default | Alternatives |
 |---|---|---|
 | VAD | Silero (on-device) | — |
-| Wake detection | AssemblyAI STT + phrase check | — |
+| Wake detection | AssemblyAI STT + phrase check | Talk button (UI, no key needed) |
 | STT | AssemblyAI streaming | Deepgram, faster-whisper (local) |
 | LLM | Gemini (via LangChain) | OpenAI, Anthropic, any OpenAI-compat endpoint |
 | TTS | Gemini (streaming chunks) | ElevenLabs, Piper (local) |
-| Actions | mock | Playwright (Phase 5) |
+| Actions | mock | `browser` (Playwright), `os` (Windows), `browser_os` (both) |
 
 Switch providers by changing `DANA_CONVERSATION__<STAGE>__PROVIDER` in `.env`.
+
+---
+
+## What DaNa can do (voice commands)
+
+Enable the action layer in `.env` (domains/apps are **default-deny** — opt in
+per site; OS actions are off unless enabled):
+
+```bash
+DANA_ACTIONS__PROVIDER=browser_os
+DANA_ACTIONS__OS_ACTIONS_ENABLED=true
+DANA_ACTIONS__ALLOWED_DOMAINS=["youtube.com","google.com","duckduckgo.com","wikipedia.org"]
+```
+
+Then, in English or Vietnamese:
+
+- **Media** — "open YouTube and play lofi hip hop" (one command), "pause",
+  "jump forward 42 seconds", "tua lui 5 giây", "skip to 3:20", "1.5× speed",
+  mute, next/previous, "what's playing?"
+- **Web** — search Google/Wikipedia/DDG, read and summarize pages, scroll
+  ("kéo xuống phần bình luận"), tabs ("open a new tab", "switch to the
+  YouTube tab"), history ("go back", "that video from earlier"), downloads
+  (executables refused)
+- **Windows** — system volume ("volume 30"), launch allowlisted apps, focus/
+  snap/minimize windows, global media keys ("what song is this?" needs the
+  optional `winsdk` package)
+
+**Safety model:** the LLM only proposes structured tool calls; a non-LLM gate
+classifies each by consequence — read-only runs free, destructive actions
+(send/buy/delete/close-window, incl. Vietnamese labels) pause for voice or UI
+confirmation, off-allowlist is refused. Every decision lands in an append-only
+audit log (Dashboard tab). Set `DANA_ACTIONS__FORBID_PURCHASES=true` to refuse
+purchase clicks outright.
 
 ---
 
@@ -183,9 +253,11 @@ The `logs/` folder is gitignored — log files never end up in the repository.
 
 ```bash
 cd dana-agent
-uv run pytest                     # offline suite (~79 tests, no network)
-uv run pytest -m live             # live provider tests (needs real API keys)
-uv run pytest --no-cov -q        # faster, no coverage report
+uv run pytest                     # offline suite (~370 tests, no network)
+uv run pytest -m live             # live provider + adapter probes (real keys;
+                                  #   adapter probes also need:
+                                  #   uv sync --extra actions &&
+                                  #   uv run playwright install chromium)
 ```
 
 The offline suite uses mock providers throughout — no API keys, no microphone.
@@ -201,11 +273,10 @@ uv run ruff format src/    # format
 uv run mypy src/           # type-check (strict)
 ```
 
----
+**Model-routing evals** (run when tool descriptions or prompts change — they
+call the real Gemini model from `.env`):
 
-## Documentation
-
-- **[docs/PLAN.md](docs/PLAN.md)** — phased roadmap, latency budget, security commitments, control-API contract
-- **[docs/adr/ADR-0001-realtime-engine.md](docs/adr/ADR-0001-realtime-engine.md)** — why Pipecat
-- **[docs/adr/ADR-0002-ui-stack.md](docs/adr/ADR-0002-ui-stack.md)** — FastAPI + React dashboard plan
-- **[backlog/](backlog/)** — task-level tracking (TASK-001 through TASK-010)
+```bash
+uv run python scripts/action_routing_eval.py     # 40 utterances (EN+VI) → expected tool calls
+uv run python scripts/action_chaining_eval.py    # 6 multi-turn scenarios through the real Brain
+```
