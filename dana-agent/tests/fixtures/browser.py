@@ -52,11 +52,41 @@ class FakeLocator:
         self._page.scroll_targets.append(self._meta)
 
 
+class FakeResponse:
+    """Stand-in for a Playwright APIResponse."""
+
+    def __init__(
+        self,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+        body: bytes = b"file-bytes",
+    ) -> None:
+        self.status = status
+        self.headers = headers or {}
+        self._body = body
+
+    async def body(self) -> bytes:
+        return self._body
+
+
+class FakeAPIRequest:
+    """Stand-in for context.request: records GETs, returns a canned response."""
+
+    def __init__(self, response: FakeResponse) -> None:
+        self.response = response
+        self.gets: list[str] = []
+
+    async def get(self, url: str, **_kw: object) -> FakeResponse:
+        self.gets.append(url)
+        return self.response
+
+
 class FakeContext:
     """Stand-in for a Playwright BrowserContext: hands out new FakePages."""
 
     def __init__(self) -> None:
         self.created = 0
+        self.request = FakeAPIRequest(FakeResponse())
 
     async def new_page(self) -> FakePage:
         self.created += 1

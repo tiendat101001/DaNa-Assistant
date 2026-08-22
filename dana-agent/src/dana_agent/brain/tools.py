@@ -238,6 +238,12 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "Read the current page: title, URL, tab count, and media state — use it "
         "to answer 'what's playing' or verify a step.",
     ),
+    ToolSpec(
+        "browser_download",
+        "Download a file from an allowlisted URL into DaNa's downloads folder. "
+        "Executable files are refused. Report the saved path to the user.",
+        (ToolArg("url", str, "Direct http(s) URL of the file (must be allowlisted)."),),
+    ),
 )
 
 OS_TOOLS: tuple[ToolSpec, ...] = (

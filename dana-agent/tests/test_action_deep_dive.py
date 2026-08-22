@@ -17,7 +17,13 @@ from dana_agent.providers.actions.browser import BrowserActions
 from dana_agent.providers.actions.composite import BrowserOSActions
 from dana_agent.providers.actions.os_win import WindowsOSActions
 from dana_agent.types import Action, Reversibility
-from tests.fixtures.browser import FakeContext, FakePage, browser_with_fake_page
+from tests.fixtures.browser import (
+    FakeAPIRequest,
+    FakeContext,
+    FakePage,
+    FakeResponse,
+    browser_with_fake_page,
+)
 
 
 def make_provider(domains: list[str] | None = None) -> BrowserActions:
@@ -26,8 +32,8 @@ def make_provider(domains: list[str] | None = None) -> BrowserActions:
     )
 
 
-def make_os(**kw: Any) -> WindowsOSActions:
-    cfg = ActionsConfig(provider="os", os_actions_enabled=True, allowed_apps=[], **kw)
+def make_os(apps: list[str] | None = None, **kw: Any) -> WindowsOSActions:
+    cfg = ActionsConfig(provider="os", os_actions_enabled=True, allowed_apps=apps or [], **kw)
     return WindowsOSActions(cfg)
 
 
@@ -519,3 +525,107 @@ def test_human_preview_redacts_and_falls_back() -> None:
     preview = human_preview("browser_type", {"into": "Password", "text": "hunter2"})
     assert "hunter2" not in preview  # never speak a secret back
     assert "browser_type" in preview
+
+
+# --- browser_download (UC-26) ----------------------------------------------------
+
+
+async def test_download_saves_allowlisted_file_to_fixed_dir() -> None:
+    provider = make_provider(["example.com"])
+    ctx = FakeContext()
+    ctx.request = FakeAPIRequest(FakeResponse(body=b"pdf-bytes"))
+    provider._ctx = ctx
+    browser_with_fake_page(provider, FakePage(url="https://example.com"))
+    result = await provider.execute(
+        Action("browser_download", {"url": "https://example.com/docs/report.pdf"})
+    )
+    assert result.ok is True
+    assert ctx.request.gets == ["https://example.com/docs/report.pdf"]
+    assert result.output.endswith("report.pdf")
+    import asyncio
+    from pathlib import Path
+
+    def _check_saved() -> None:
+        saved = Path(".dana/downloads/report.pdf")
+        assert saved.exists() and saved.read_bytes() == b"pdf-bytes"
+
+    await asyncio.to_thread(_check_saved)
+
+
+async def test_download_off_allowlist_refused_without_fetch() -> None:
+    provider = make_provider(["example.com"])
+    ctx = FakeContext()
+    provider._ctx = ctx
+    browser_with_fake_page(provider, FakePage(url="https://example.com"))
+    result = await provider.execute(Action("browser_download", {"url": "https://evil.com/x.pdf"}))
+    assert result.ok is False
+    assert "not allowlisted" in (result.error or "")
+    assert ctx.request.gets == []
+
+
+async def test_download_refuses_executables_by_extension_and_content_type() -> None:
+    provider = make_provider(["example.com"])
+    ctx = FakeContext()
+    provider._ctx = ctx
+    browser_with_fake_page(provider, FakePage(url="https://example.com"))
+    by_ext = await provider.execute(
+        Action("browser_download", {"url": "https://example.com/setup.exe"})
+    )
+    assert by_ext.ok is False and "executable" in (by_ext.error or "")
+
+    ctx.request = FakeAPIRequest(
+        FakeResponse(headers={"content-type": "application/x-msdownload"}, body=b"x")
+    )
+    by_ct = await provider.execute(
+        Action("browser_download", {"url": "https://example.com/innocent.txt"})
+    )
+    assert by_ct.ok is False and "content-type" in (by_ct.error or "")
+    # extension path refused BEFORE fetching; content-type path fetched first
+    assert ctx.request.gets == ["https://example.com/innocent.txt"]
+
+
+async def test_download_http_error_is_structured() -> None:
+    provider = make_provider(["example.com"])
+    ctx = FakeContext()
+    ctx.request = FakeAPIRequest(FakeResponse(status=404))
+    provider._ctx = ctx
+    browser_with_fake_page(provider, FakePage(url="https://example.com"))
+    result = await provider.execute(
+        Action("browser_download", {"url": "https://example.com/gone.pdf"})
+    )
+    assert result.ok is False
+    assert "HTTP 404" in (result.error or "")
+
+
+def test_classify_download_table() -> None:
+    provider = make_provider(["example.com"])
+    ok = Action("browser_download", {"url": "https://example.com/x.pdf"})
+    off = Action("browser_download", {"url": "https://evil.com/x.pdf"})
+    assert provider.classify(ok) is Reversibility.REVERSIBLE
+    assert provider.classify(off) is Reversibility.OUT_OF_SCOPE
+
+
+# --- os_launch_app downloads folder (UC-27) ---------------------------------------
+
+
+def test_launch_downloads_creates_dir_and_opens(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os as _os
+
+    provider = make_os(apps=["downloads"])
+    opened: list[str] = []
+    monkeypatch.setattr(_os, "startfile", opened.append, raising=False)
+    result = provider._launch("downloads")
+    assert result.ok is True
+    assert opened and _os.path.isdir(opened[0])  # dir existed before opening
+    assert opened[0].endswith("downloads")
+
+
+def test_launch_downloads_not_allowlisted_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os as _os
+
+    provider = make_os(apps=[])
+    opened: list[str] = []
+    monkeypatch.setattr(_os, "startfile", opened.append, raising=False)
+    result = provider._launch("downloads")
+    assert result.ok is False
+    assert opened == []

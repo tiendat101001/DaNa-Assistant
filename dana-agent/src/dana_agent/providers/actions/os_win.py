@@ -29,12 +29,15 @@ from dana_agent.types import Action, ActionResult, Reversibility
 
 # App NAME -> resolved launch target. The model supplies a name (never a shell
 # string); only names that ALSO appear in cfg.allowed_apps are launchable.
+# "downloads" opens DaNa's fixed downloads dir (UC-27) — a provider-fixed
+# path, never model-supplied.
 _APP_TABLE: dict[str, str] = {
     "notepad": "notepad.exe",
     "calculator": "calc.exe",
     "explorer": "explorer.exe",
     "browser": "msedge.exe",
     "spotify": os.path.expandvars(r"%APPDATA%\Spotify\Spotify.exe"),
+    "downloads": os.path.abspath(os.path.join(".dana", "downloads")),
 }
 
 # Media virtual-key codes (see research §B.3). Sent via keybd_event.
@@ -170,6 +173,10 @@ class WindowsOSActions(ActionProvider):
         exe = _APP_TABLE.get(name.lower().strip())
         if not exe:
             return ActionResult(ok=False, error=f"refused: no launch target mapped for {name}")
+        if not exe.lower().endswith(".exe"):
+            # A directory target (the downloads folder): make sure it exists so
+            # Explorer doesn't open a dead path.
+            os.makedirs(exe, exist_ok=True)
         startfile = getattr(os, "startfile", None)  # Windows-only attribute
         if startfile is not None:
             startfile(exe)  # shell association, no user shell STRING involved

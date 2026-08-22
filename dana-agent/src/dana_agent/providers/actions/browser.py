@@ -36,6 +36,36 @@ log = get_logger(__name__)
 _NAV_TIMEOUT_MS = 15_000
 # Truncate page text: bounds context growth AND the prompt-injection surface.
 _READ_TEXT_LIMIT = 8_000
+# --- downloads (UC-26) -----------------------------------------------------
+_DOWNLOAD_DIR = ".dana/downloads"
+_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024
+# Executable/script payloads a voice-requested download must never save, by
+# URL extension or Content-Type hint. Belt and braces: both are checked.
+_DOWNLOAD_DENY_EXTS = frozenset(
+    {
+        "exe",
+        "msi",
+        "msix",
+        "msp",
+        "bat",
+        "cmd",
+        "com",
+        "scr",
+        "vbs",
+        "vbe",
+        "js",
+        "jse",
+        "wsf",
+        "ps1",
+        "jar",
+        "hta",
+        "lnk",
+        "reg",
+        "dll",
+        "msc",
+    }
+)
+_DOWNLOAD_DENY_CT_HINTS = ("executable", "msdownload", "x-dosexec", "powershell", "batch")
 # Purchase-committing labels — a strict subset of the destructive words. When
 # ``forbid_purchases`` is set these are REFUSED outright, not confirmed.
 _PURCHASE_WORDS = (
@@ -81,6 +111,7 @@ _KNOWN_TOOLS = frozenset(
         "browser_history",
         "browser_search",
         "browser_get_state",
+        "browser_download",
     }
 )
 
@@ -208,6 +239,13 @@ def _fmt_seconds(s: float) -> str:
     return f"{m}:{sec:02d}"
 
 
+def _safe_download_name(url: str) -> str:
+    """Filename from the URL path, reduced to boring characters only."""
+    base = urlparse(url).path.rsplit("/", 1)[-1] or "download.bin"
+    name = "".join(c if c.isalnum() or c in "-_." else "_" for c in base)[:120]
+    return name.lstrip(".") or "download.bin"
+
+
 def _speakable_media(result: Any) -> str:
     """Turn the state-script dict into a short, TTS-friendly string."""
     if not isinstance(result, dict):
@@ -280,6 +318,13 @@ class BrowserActions(ActionProvider):
             url = str(args.get("url", ""))
             return (
                 Reversibility.READ_ONLY if self._host_allowed(url) else Reversibility.OUT_OF_SCOPE
+            )
+        if tool == "browser_download":
+            # Local file write from an allowlisted host — reversible (delete),
+            # audited; the conservative policy confirms it (design doc §5).
+            url = str(args.get("url", ""))
+            return (
+                Reversibility.REVERSIBLE if self._host_allowed(url) else Reversibility.OUT_OF_SCOPE
             )
         if tool == "browser_search":
             from dana_agent.providers.actions.adapters import search_url as _su  # noqa: PLC0415
@@ -461,6 +506,48 @@ class BrowserActions(ActionProvider):
     def _tracked_tabs(self) -> list[Any]:
         return self._tabs if self._tabs else ([self._page] if self._page is not None else [])
 
+    async def _download(self, args: dict[str, object]) -> ActionResult:
+        """Save a file from an allowlisted URL into the fixed downloads dir.
+
+        A direct API GET on the browser context (not a click), so the page's
+        cookies make authenticated downloads work and the context itself stays
+        ``accept_downloads=False`` — a download can only ever start through
+        this tool, never as a side effect of clicking. Executable payloads are
+        refused by URL extension AND Content-Type; size is capped."""
+        url = str(args.get("url", ""))
+        if not self._host_allowed(url):
+            return ActionResult(ok=False, error=f"refused: domain not allowlisted: {url}")
+        name = _safe_download_name(url)
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext in _DOWNLOAD_DENY_EXTS:
+            return ActionResult(
+                ok=False, error=f"refused: executable downloads are forbidden: {name}"
+            )
+        if self._ctx is None:
+            return ActionResult(ok=False, error="no browser context for downloads")
+        resp = await self._ctx.request.get(url)
+        status = int(getattr(resp, "status", 0) or 0)
+        if status >= 400:
+            return ActionResult(ok=False, error=f"download failed: HTTP {status}")
+        headers = {
+            str(k).lower(): str(v) for k, v in dict(getattr(resp, "headers", {}) or {}).items()
+        }
+        ctype = headers.get("content-type", "")
+        if any(hint in ctype.lower() for hint in _DOWNLOAD_DENY_CT_HINTS):
+            return ActionResult(ok=False, error=f"refused: executable content-type: {ctype!r}")
+        body = await resp.body()
+        if len(body) > _DOWNLOAD_MAX_BYTES:
+            return ActionResult(ok=False, error=f"refused: too large ({len(body)} bytes)")
+
+        def _write(blob: bytes) -> str:
+            out_dir = Path(_DOWNLOAD_DIR)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / name
+            out_path.write_bytes(blob)
+            return str(out_path)
+
+        return ActionResult(ok=True, output=f"saved to {await asyncio.to_thread(_write, body)}")
+
     async def _dispatch(self, page: Any, tool: str, args: dict[str, object]) -> ActionResult:
         if tool == "browser_navigate":
             return await self._goto(page, str(args.get("url", "")))
@@ -617,6 +704,9 @@ class BrowserActions(ActionProvider):
                 ok=True,
                 output=f"page: {active!r} ({page.url}) | tabs: {len(tabs)} | media: {media_str}",
             )
+
+        if tool == "browser_download":
+            return await self._download(args)
 
         # tool == "browser_screenshot" (guaranteed by _KNOWN_TOOLS)
         if (refusal := self._current_page_refusal(page)) is not None:
