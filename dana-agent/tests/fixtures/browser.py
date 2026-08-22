@@ -52,6 +52,17 @@ class FakeLocator:
         self._page.scroll_targets.append(self._meta)
 
 
+class FakeContext:
+    """Stand-in for a Playwright BrowserContext: hands out new FakePages."""
+
+    def __init__(self) -> None:
+        self.created = 0
+
+    async def new_page(self) -> FakePage:
+        self.created += 1
+        return FakePage(url="about:blank")
+
+
 class FakePage:
     """Records interactions; returns canned page text. Async where Playwright is."""
 
@@ -61,12 +72,14 @@ class FakePage:
         body_text: str = "hello world",
         url: str = "about:blank",
         redirect_to: str | None = None,
+        doc_title: str = "Example Page",
     ) -> None:
         self.url = url
         self._body_text = body_text
         # When set, goto() lands here instead of its argument (simulates a 30x /
         # meta-refresh / JS redirect to a possibly off-allowlist host).
         self._redirect_to = redirect_to
+        self.doc_title = doc_title
         self.goto_urls: list[str] = []
         self.clicks: list[dict[str, object]] = []
         self.fills: list[tuple[dict[str, object], str]] = []
@@ -84,8 +97,29 @@ class FakePage:
             "muted": False,
         }
         self.media_title: str | None = "lofi hip hop radio"
-        self.doc_title: str = "Example Page"
         self.scroll_y = 0.0
+        # Tab/history interaction recording.
+        self.history_calls: list[str] = []
+        self.brought_to_front = 0
+        self.closed = False
+
+    async def title(self) -> str:
+        return self.doc_title
+
+    async def go_back(self) -> None:
+        self.history_calls.append("back")
+
+    async def go_forward(self) -> None:
+        self.history_calls.append("forward")
+
+    async def bring_to_front(self) -> None:
+        self.brought_to_front += 1
+
+    async def close(self) -> None:
+        self.closed = True
+
+    def locator(self, css: str) -> FakeLocator:
+        return FakeLocator(self, {"css": css})
 
     @property
     def keyboard(self) -> FakeKeyboard:

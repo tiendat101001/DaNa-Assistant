@@ -20,6 +20,7 @@ dana types and the offline test suite stays green with no browser installed.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -36,6 +37,7 @@ _NAV_TIMEOUT_MS = 15_000
 # Truncate page text: bounds context growth AND the prompt-injection surface.
 _READ_TEXT_LIMIT = 8_000
 # Click labels that commit an irreversible/consequential action → DESTRUCTIVE.
+# English + Vietnamese (vi labels must survive .lower(), which keeps diacritics).
 _DESTRUCTIVE_CLICK_WORDS = (
     "submit",
     "pay",
@@ -46,6 +48,12 @@ _DESTRUCTIVE_CLICK_WORDS = (
     "place order",
     "checkout",
     "remove",
+    "gửi",  # send
+    "xóa",  # delete
+    "thanh toán",  # pay / checkout
+    "đặt hàng",  # place order
+    "đặt mua",  # place order (alt)
+    "xác nhận",  # confirm
 )
 # The bounded, known tool set. Anything else is OUT_OF_SCOPE.
 _KNOWN_TOOLS = frozenset(
@@ -58,6 +66,10 @@ _KNOWN_TOOLS = frozenset(
         "browser_press_key",
         "browser_scroll",
         "browser_media",
+        "browser_tab",
+        "browser_history",
+        "browser_search",
+        "browser_get_state",
     }
 )
 
@@ -216,6 +228,11 @@ class BrowserActions(ActionProvider):
         self._ctx: Any = None  # persistent BrowserContext (lazy)
         self._page: Any = None  # active Page (lazy)
         self._page_lock: Any = None  # asyncio.Lock, created on first use
+        self._tabs: list[Any] = []  # tracked Pages (tab manager, M2)
+        # Append-only visit log (url/title/ts) — the substrate for "go back to
+        # that video from earlier". Same trust level as the audit log.
+        self._visits: list[dict[str, object]] = []
+        self._max_visits = 100
 
     @property
     def capabilities(self) -> Capabilities:
@@ -253,7 +270,38 @@ class BrowserActions(ActionProvider):
             return (
                 Reversibility.READ_ONLY if self._host_allowed(url) else Reversibility.OUT_OF_SCOPE
             )
-        if tool in ("browser_read_text", "browser_screenshot"):
+        if tool == "browser_search":
+            from dana_agent.providers.actions.adapters import search_url as _su  # noqa: PLC0415
+
+            search_target = _su(str(args.get("engine", "")), str(args.get("query", "")))
+            if search_target is None or not self._host_allowed(search_target):
+                return Reversibility.OUT_OF_SCOPE  # unknown engine / off-allowlist
+            if args.get("open_first"):
+                return Reversibility.REVERSIBLE  # includes a generic result click
+            return Reversibility.READ_ONLY  # navigation only
+        if tool == "browser_history":
+            hist_act = str(args.get("action", ""))
+            if hist_act == "goto":
+                # Re-opening a logged visit is a navigate → same allowlist rule.
+                idx = args.get("index")
+                visits = self._recent_visits()
+                if isinstance(idx, int) and not isinstance(idx, bool) and 1 <= idx <= len(visits):
+                    revisit = str(visits[idx - 1]["url"])
+                    return (
+                        Reversibility.READ_ONLY
+                        if self._host_allowed(revisit)
+                        else Reversibility.OUT_OF_SCOPE
+                    )
+                return Reversibility.OUT_OF_SCOPE
+            return Reversibility.READ_ONLY  # back/forward/list: transient navigation
+        if tool == "browser_tab":
+            tab_act = str(args.get("action", ""))
+            if tab_act in ("new", "close"):
+                return Reversibility.REVERSIBLE  # local, recoverable (history/reopen)
+            if tab_act in ("list", "switch"):
+                return Reversibility.READ_ONLY
+            return Reversibility.OUT_OF_SCOPE
+        if tool in ("browser_read_text", "browser_screenshot", "browser_get_state"):
             return Reversibility.READ_ONLY
         if tool in ("browser_media", "browser_scroll"):
             # Transport control and scrolling are transient (no lasting state,
@@ -314,7 +362,8 @@ class BrowserActions(ActionProvider):
             def _on_popup(popup: Any) -> None:
                 # An allowlisted page can still be coerced into opening windows:
                 # every new page gets the allowlist re-asserted, and an
-                # off-allowlist popup is closed immediately.
+                # off-allowlist popup is closed immediately. An allowlisted
+                # popup becomes a tracked tab.
                 url = str(getattr(popup, "url", "") or "")
                 if url and url != "about:blank" and not self._host_allowed(url):
                     log.warning("popup_blocked_off_allowlist", url=url)
@@ -322,10 +371,14 @@ class BrowserActions(ActionProvider):
                         popup.close()
                     except Exception:  # noqa: BLE001 — best-effort guard, never fatal
                         log.debug("popup_close_failed")
+                    return
+                if popup not in self._tabs:
+                    self._tabs.append(popup)
 
             self._ctx.on("page", _on_popup)
             self._ctx.set_default_timeout(_NAV_TIMEOUT_MS)  # auto-wait cap; NO sleeps
             self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+            self._tabs = [self._page]
         return self._page
 
     async def aclose(self) -> None:
@@ -364,19 +417,40 @@ class BrowserActions(ActionProvider):
             return ActionResult(ok=False, error=f"refused: current page is off-allowlist: {host}")
         return None
 
+    async def _goto(self, page: Any, url: str) -> ActionResult:
+        """Allowlist-checked navigation (shared by navigate/search/history-goto).
+        Records the landed visit in the provider's visit log."""
+        if not self._host_allowed(url):
+            return ActionResult(ok=False, error=f"refused: domain not allowlisted: {url}")
+        await page.goto(url, wait_until="domcontentloaded")
+        # Re-assert against the LANDED url: an allowlisted target that
+        # redirects off-allowlist must be treated as a refusal, not exposed.
+        landed = str(page.url)
+        if not self._host_allowed(landed):
+            host = (urlparse(landed).hostname or landed).lower()
+            return ActionResult(ok=False, error=f"refused: redirected off-allowlist to {host}")
+        await self._record_visit(page, landed)
+        return ActionResult(ok=True, output=f"navigated to {landed}")
+
+    async def _record_visit(self, page: Any, url: str) -> None:
+        try:
+            title = str(await page.title())
+        except Exception:  # noqa: BLE001 — title is best-effort metadata
+            title = ""
+        self._visits.append({"url": url, "title": title, "at": time.time()})
+        if len(self._visits) > self._max_visits:
+            del self._visits[: len(self._visits) - self._max_visits]
+
+    def _recent_visits(self) -> list[dict[str, object]]:
+        """Visits oldest→newest (index 1 = oldest of the recent window)."""
+        return self._visits
+
+    def _tracked_tabs(self) -> list[Any]:
+        return self._tabs if self._tabs else ([self._page] if self._page is not None else [])
+
     async def _dispatch(self, page: Any, tool: str, args: dict[str, object]) -> ActionResult:
         if tool == "browser_navigate":
-            url = str(args.get("url", ""))
-            if not self._host_allowed(url):
-                return ActionResult(ok=False, error=f"refused: domain not allowlisted: {url}")
-            await page.goto(url, wait_until="domcontentloaded")
-            # Re-assert against the LANDED url: an allowlisted target that
-            # redirects off-allowlist must be treated as a refusal, not exposed.
-            landed = str(page.url)
-            if not self._host_allowed(landed):
-                host = (urlparse(landed).hostname or landed).lower()
-                return ActionResult(ok=False, error=f"refused: redirected off-allowlist to {host}")
-            return ActionResult(ok=True, output=f"navigated to {landed}")
+            return await self._goto(page, str(args.get("url", "")))
 
         if tool == "browser_read_text":
             if (refusal := self._current_page_refusal(page)) is not None:
@@ -454,6 +528,83 @@ class BrowserActions(ActionProvider):
                 return refusal
             return await self._media(page, args)
 
+        if tool == "browser_tab":
+            return await self._tab(page, args)
+
+        if tool == "browser_history":
+            action = str(args.get("action", ""))
+            if action in ("back", "forward"):
+                if (refusal := self._current_page_refusal(page)) is not None:
+                    return refusal
+                await (page.go_back() if action == "back" else page.go_forward())
+                return ActionResult(ok=True, output=f"went {action}")
+            if action == "list":
+                visits = self._recent_visits()
+                if not visits:
+                    return ActionResult(ok=True, output="no visited pages yet")
+                lines = [
+                    f"{i}. {v['title'] or v['url']} — {v['url']}"
+                    for i, v in enumerate(reversed(visits[-10:]), start=1)
+                ]
+                return ActionResult(ok=True, output="\n".join(lines))
+            if action == "goto":
+                idx = args.get("index")
+                visits = self._recent_visits()
+                if (
+                    not isinstance(idx, int)
+                    or isinstance(idx, bool)
+                    or not (1 <= idx <= len(visits))
+                ):
+                    return ActionResult(ok=False, error=f"refused: bad visit index: {idx!r}")
+                url = str(visits[idx - 1]["url"])  # oldest→newest, 1-based
+                return await self._goto(page, url)
+            return ActionResult(ok=False, error=f"refused: unknown history action {action!r}")
+
+        if tool == "browser_search":
+            from dana_agent.providers.actions.adapters import ADAPTERS, search_url  # noqa: PLC0415
+
+            engine = str(args.get("engine", ""))
+            query = str(args.get("query", ""))
+            search_target = search_url(engine, query)
+            if search_target is None:
+                known = ", ".join(sorted(ADAPTERS))
+                return ActionResult(
+                    ok=False, error=f"refused: unknown search engine {engine!r} (known: {known})"
+                )
+            result = await self._goto(page, search_target)
+            if not result.ok:
+                return result
+            if args.get("open_first"):
+                selector = ADAPTERS[engine].first_result_selector
+                if selector is None:
+                    return ActionResult(
+                        ok=True, output=result.output + "; no first-result selector"
+                    )
+                await page.locator(selector).first.click()  # auto-waits; no sleeps
+                await self._record_visit(page, str(page.url))
+                return ActionResult(ok=True, output=f"searched {engine}, opened first result")
+            return result
+
+        if tool == "browser_get_state":
+            if (refusal := self._current_page_refusal(page)) is not None:
+                return refusal
+            tabs = self._tracked_tabs()
+            titles = []
+            for tab in tabs:
+                try:
+                    titles.append(str(await tab.title()))
+                except Exception:  # noqa: BLE001 — best-effort metadata
+                    titles.append("")
+            active = titles[0] if titles else ""
+            if tabs and self._page is not None and tabs.index(self._page) < len(titles):
+                active = titles[tabs.index(self._page)]
+            media_state = await self._eval_media(page, "state", None)
+            media_str = _speakable_media(media_state) if isinstance(media_state, dict) else "none"
+            return ActionResult(
+                ok=True,
+                output=f"page: {active!r} ({page.url}) | tabs: {len(tabs)} | media: {media_str}",
+            )
+
         # tool == "browser_screenshot" (guaranteed by _KNOWN_TOOLS)
         if (refusal := self._current_page_refusal(page)) is not None:
             return refusal
@@ -469,6 +620,88 @@ class BrowserActions(ActionProvider):
             return str(out_path)
 
         return ActionResult(ok=True, output=await asyncio.to_thread(_write_screenshot, png))
+
+    # --- tab manager (M2) ----------------------------------------------------
+
+    async def _tab(self, page: Any, args: dict[str, object]) -> ActionResult:
+        action = str(args.get("action", ""))
+
+        if action == "new":
+            if self._ctx is None:
+                return ActionResult(ok=False, error="no browser context for a new tab")
+            new_page = await self._ctx.new_page()
+            self._tabs.append(new_page)
+            self._page = new_page  # a voice-opened tab becomes the active one
+            await new_page.bring_to_front()
+            url = args.get("url")
+            if url is not None:
+                result = await self._goto(new_page, str(url))
+                if not result.ok:
+                    return result
+            return ActionResult(ok=True, output=f"new tab ({len(self._tabs)} open)")
+
+        if action == "list":
+            tabs = self._tracked_tabs()
+            if not tabs:
+                return ActionResult(ok=True, output="no tabs")
+            lines = []
+            for i, tab in enumerate(tabs, start=1):
+                title = ""
+                try:
+                    title = str(await tab.title())
+                except Exception:  # noqa: BLE001 — best-effort metadata
+                    log.debug("tab_title_unavailable")
+                marker = "*" if tab is self._page else " "
+                lines.append(f"{marker}{i}. {title or tab.url}")
+            return ActionResult(ok=True, output="\n".join(lines))
+
+        if action == "switch":
+            target = await self._match_tab(args.get("title"), args.get("index"))
+            if target is None:
+                return ActionResult(ok=False, error="refused: no tab matches")
+            self._page = target
+            await target.bring_to_front()
+            return ActionResult(ok=True, output=f"switched to tab ({target.url})")
+
+        if action == "close":
+            target = await self._match_tab(args.get("title"), args.get("index")) or page
+            await target.close()
+            if target in self._tabs:
+                self._tabs.remove(target)
+            if target is self._page:
+                # Fall back to another tab, or a fresh page on the live context.
+                if self._tabs:
+                    self._page = self._tabs[0]
+                    await self._page.bring_to_front()
+                elif self._ctx is not None:
+                    self._page = await self._ctx.new_page()
+                    self._tabs = [self._page]
+                else:
+                    self._page = None
+            return ActionResult(ok=True, output=f"closed tab ({len(self._tracked_tabs())} open)")
+
+        return ActionResult(ok=False, error=f"refused: unknown tab action {action!r}")
+
+    async def _match_tab(self, title: object, index: object) -> Any | None:
+        """Find a tab by 1-based index, URL substring, or (awaited) page title
+        substring; None if no match. The active page is a candidate too (close/
+        switch current tab)."""
+        tabs = self._tracked_tabs()
+        if isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= len(tabs):
+            return tabs[index - 1]
+        if isinstance(title, str) and title:
+            needle = title.lower()
+            for tab in tabs:  # URL match first — cheap, no round trip
+                if needle in str(getattr(tab, "url", "")).lower():
+                    return tab
+            for tab in tabs:  # then the rendered page title
+                try:
+                    if needle in str(await tab.title()).lower():
+                        return tab
+                except Exception:  # noqa: BLE001 — best-effort metadata
+                    log.debug("tab_title_unavailable")
+                    continue
+        return None
 
     # --- media engine (canned JS only; the model never authors scripts) ---
 

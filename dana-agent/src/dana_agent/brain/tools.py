@@ -188,6 +188,42 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
             ToolArg("rate", float, "Playback rate 0.25-2.0 (rate).", required=False),
         ),
     ),
+    ToolSpec(
+        "browser_tab",
+        "Manage browser tabs: open a new one (optionally at a URL), list them, "
+        "switch by title substring or 1-based index, or close one.",
+        (
+            ToolArg("action", str, "new|list|switch|close"),
+            ToolArg("url", str, "URL for a new tab.", required=False),
+            ToolArg("title", str, "Title/URL substring of the tab.", required=False),
+            ToolArg("index", int, "1-based tab number.", required=False),
+        ),
+    ),
+    ToolSpec(
+        "browser_history",
+        "Session/visit history: go back or forward, list recent visits "
+        "(oldest→newest), or re-open one by its 1-based index.",
+        (
+            ToolArg("action", str, "back|forward|list|goto"),
+            ToolArg("index", int, "1-based visit number (goto).", required=False),
+        ),
+    ),
+    ToolSpec(
+        "browser_search",
+        "Search on an allowlisted engine (youtube, google, duckduckgo, wikipedia) "
+        "in one step. With open_first=True, click the first result too — e.g. "
+        "'play lofi on YouTube' is one call.",
+        (
+            ToolArg("query", str, "The search query."),
+            ToolArg("engine", str, "youtube|google|duckduckgo|wikipedia"),
+            ToolArg("open_first", bool, "Also click the first result.", required=False),
+        ),
+    ),
+    ToolSpec(
+        "browser_get_state",
+        "Read the current page: title, URL, tab count, and media state — use it "
+        "to answer 'what's playing' or verify a step.",
+    ),
 )
 
 OS_TOOLS: tuple[ToolSpec, ...] = (
@@ -215,17 +251,42 @@ OS_TOOLS: tuple[ToolSpec, ...] = (
         "Replace the clipboard text.",
         (ToolArg("text", str, "Text to place on the clipboard."),),
     ),
+    ToolSpec(
+        "os_volume",
+        "Get or set the system master volume (0-100), or mute/unmute it.",
+        (
+            ToolArg("action", str, "get|set|mute|unmute"),
+            ToolArg("percent", int, "Volume level 0-100 (set).", required=False),
+        ),
+    ),
+    ToolSpec(
+        "os_window",
+        "Manage a window (by title substring, else the foreground one): snap to "
+        "screen halves, minimize, maximize, restore, or close it.",
+        (
+            ToolArg("action", str, "snap_left|snap_right|minimize|maximize|restore|close"),
+            ToolArg("title", str, "Window title substring.", required=False),
+        ),
+    ),
+    ToolSpec(
+        "os_media_state",
+        "What is playing system-wide right now (title/artist/status of the "
+        "current media session, any app) — answers 'what song is this?'.",
+    ),
 )
 
 
 def action_tool_specs(cfg: ActionsConfig) -> list[ToolSpec]:
     """The ToolSpecs matching the configured action provider (default-deny: an
     unknown/mock provider exposes no real tools)."""
+    os_tools = list(OS_TOOLS) if cfg.os_actions_enabled else []
     if cfg.provider == "browser":
         return list(BROWSER_TOOLS)
     if cfg.provider == "os":
-        # Even when selected, OS tools are only offered when explicitly enabled.
-        return list(OS_TOOLS) if cfg.os_actions_enabled else []
+        return os_tools
+    if cfg.provider == "browser_os":
+        # Browser + OS together: both surfaces, OS still opt-in.
+        return list(BROWSER_TOOLS) + os_tools
     return []
 
 

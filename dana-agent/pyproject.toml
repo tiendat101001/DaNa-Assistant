@@ -50,9 +50,10 @@ brain = [
 brain-openai = ["langchain-openai>=0.2,<2"]
 brain-google = ["langchain-google-genai>=2.0,<5"]
 brain-anthropic = ["langchain-anthropic>=0.2,<2"]
-# Phase 5 — action layer
+# Phase 5 — action layer. pycaw backs os_volume (master mixer via COM).
 actions = [
     "playwright>=1.44,<2",
+    "pycaw>=20240207",
 ]
 # Phase 6 — control API + secrets vault + tray. pillow is pystray's image dep.
 control = [
@@ -146,6 +147,10 @@ module = [
     "pystray.*",
     "keyring.*",
     "PIL.*",
+    "pycaw.*",
+    "comtypes.*",
+    "winsdk.*",
+    "winrt.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"
