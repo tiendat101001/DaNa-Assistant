@@ -19,6 +19,7 @@ dana types and the offline test suite stays green with no browser installed.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -239,8 +240,12 @@ class BrowserActions(ActionProvider):
         import time  # noqa: PLC0415
 
         png = await page.screenshot()
-        out_dir = Path(".dana/screenshots")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{int(time.time())}.png"
-        out_path.write_bytes(png)
-        return ActionResult(ok=True, output=str(out_path))
+
+        def _write_screenshot(blob: bytes) -> str:
+            out_dir = Path(".dana/screenshots")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"{int(time.time())}.png"
+            out_path.write_bytes(blob)
+            return str(out_path)
+
+        return ActionResult(ok=True, output=await asyncio.to_thread(_write_screenshot, png))

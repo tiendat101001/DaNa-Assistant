@@ -93,9 +93,7 @@ def diff_and_label(current: AppConfig, new: AppConfig) -> list[FieldChange]:
         new_val = new_flat.get(path)
         if old == new_val:
             continue
-        status = (
-            ChangeStatus.APPLIED if path in HOT_APPLY_PATHS else ChangeStatus.RESTART_REQUIRED
-        )
+        status = ChangeStatus.APPLIED if path in HOT_APPLY_PATHS else ChangeStatus.RESTART_REQUIRED
         changes.append(FieldChange(path=path, old=old, new=new_val, status=status))
     return changes
 

@@ -136,9 +136,7 @@ def test_session_start_stop_drive_controller(
     assert controller.calls == ["start", "stop"]
 
 
-def test_mic_mute_unmute_drive_controller(
-    client: TestClient, controller: FakeController
-) -> None:
+def test_mic_mute_unmute_drive_controller(client: TestClient, controller: FakeController) -> None:
     assert client.post("/api/v1/mic/mute", headers=AUTH).json() == {"muted": True}
     assert client.post("/api/v1/mic/unmute", headers=AUTH).json() == {"muted": False}
     assert controller.calls == ["mute", "unmute"]
@@ -156,8 +154,11 @@ def test_status_reports_controller_state(client: TestClient) -> None:
 def test_resolve_known_confirmation(client: TestClient, controller: FakeController) -> None:
     controller.add_pending(
         ConfirmationInfo(
-            id="c1", tool="delete_file", args_resolved={"path": "x"},
-            reversibility="destructive", preview="delete_file(path='x')",
+            id="c1",
+            tool="delete_file",
+            args_resolved={"path": "x"},
+            reversibility="destructive",
+            preview="delete_file(path='x')",
         )
     )
     r = client.post("/api/v1/confirmations/c1", headers=AUTH, json={"approved": True})

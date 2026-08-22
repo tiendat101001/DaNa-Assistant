@@ -1,0 +1,48 @@
+# Pre-commit hooks for the DaNa monorepo.
+# Install once:  uv tool install pre-commit && pre-commit install
+# Run manually:  pre-commit run --all-files
+#
+# Python hooks run inside dana-agent's uv environment so they use the exact
+# pinned ruff/mypy from uv.lock. Language hooks run only on that sub-tree.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+
+  # Refuse to commit secrets / machine-local config (gitignored on purpose).
+  - repo: local
+    hooks:
+      - id: no-secrets-or-local-config
+        name: no .env / dana.toml / keyring dumps
+        entry: bash scripts/pre-commit-no-secrets.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff check (dana-agent)
+        entry: uv run --directory dana-agent ruff check --force-exclude
+        language: system
+        types: [python]
+        files: ^dana-agent/
+      - id: ruff-format
+        name: ruff format (dana-agent)
+        entry: uv run --directory dana-agent ruff format
+        language: system
+        types: [python]
+        files: ^dana-agent/
+      - id: mypy
+        name: mypy strict (dana-agent)
+        entry: uv run --directory dana-agent mypy
+        language: system
+        types: [python]
+        files: ^dana-agent/
+        pass_filenames: false

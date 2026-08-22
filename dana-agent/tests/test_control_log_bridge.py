@@ -46,8 +46,16 @@ def test_install_and_forward_latency() -> None:
 def test_action_audit_becomes_audit_entry() -> None:
     bus = EventBus()
     sub = bus.subscribe()
-    _sink(bus)({"event": "action_audit", "tool": "click", "decision": "allow",
-                "reversibility": "reversible", "executed": True, "ok": True})
+    _sink(bus)(
+        {
+            "event": "action_audit",
+            "tool": "click",
+            "decision": "allow",
+            "reversibility": "reversible",
+            "executed": True,
+            "ok": True,
+        }
+    )
     env = sub._queue.get_nowait()
     assert env.type == "audit_entry"
     assert env.data["tool"] == "click"
@@ -112,11 +120,17 @@ def test_assistant_turn_becomes_assistant_turn() -> None:
 def test_confirmation_required_becomes_confirmation_request() -> None:
     bus = EventBus()
     sub = bus.subscribe()
-    _sink(bus)({
-        "event": "confirmation_required", "id": "c1", "tool": "click",
-        "reversibility": "destructive", "args_resolved": {"text": "delete"},
-        "preview": "click(text='delete')", "session": "s1",
-    })
+    _sink(bus)(
+        {
+            "event": "confirmation_required",
+            "id": "c1",
+            "tool": "click",
+            "reversibility": "destructive",
+            "args_resolved": {"text": "delete"},
+            "preview": "click(text='delete')",
+            "session": "s1",
+        }
+    )
     env = sub._queue.get_nowait()
     assert env.type == "confirmation_request"
     assert env.data["id"] == "c1"

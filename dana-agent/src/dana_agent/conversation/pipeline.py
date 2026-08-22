@@ -87,7 +87,7 @@ def _build_stt_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
     if provider == "mock":
         # In cascade mode with a mock STT, wrap our existing mock provider in a
         # thin FrameProcessor so tests stay fully offline.
-        return _MockSTTBridge(stack.stt)  # type: ignore[arg-type]
+        return _MockSTTBridge(stack.stt)
 
     raise ValueError(
         f"STT provider '{provider}' is not supported in the Pipecat pipeline. "
@@ -276,7 +276,7 @@ def build_s2s_pipeline(
 # ---------------------------------------------------------------------------
 
 
-class _MockSTTBridge(FrameProcessor):
+class _MockSTTBridge(FrameProcessor):  # type: ignore[misc]
     """Wraps our mock STTProvider in a pipecat FrameProcessor so the pipeline
     compiles with no network during offline tests. The mock provider never
     produces real transcriptions — it just passes frames through."""
@@ -285,6 +285,6 @@ class _MockSTTBridge(FrameProcessor):
         super().__init__(**kwargs)
         self._provider = stt_provider
 
-    async def process_frame(self, frame: FrameProcessor, direction: object) -> None:  # type: ignore[override]
-        await super().process_frame(frame, direction)  # type: ignore[arg-type]
-        await self.push_frame(frame, direction)  # type: ignore[arg-type]
+    async def process_frame(self, frame: FrameProcessor, direction: object) -> None:
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)

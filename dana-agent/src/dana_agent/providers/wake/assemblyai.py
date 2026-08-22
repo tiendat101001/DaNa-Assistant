@@ -72,8 +72,7 @@ class AssemblyAIWakeDetector:
             from assemblyai.streaming.v3.models import RealTimeParameters  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
-                "assemblyai>=1.0 is required for wake detection: "
-                "pip install 'assemblyai>=1.0'"
+                "assemblyai>=1.0 is required for wake detection: pip install 'assemblyai>=1.0'"
             ) from exc
 
         found = False

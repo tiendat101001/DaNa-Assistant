@@ -40,9 +40,7 @@ def test_cloud_stt_rejected() -> None:
 
 
 def test_cloud_brain_llm_rejected() -> None:
-    cfg = clean_config(
-        privacy={"local_only": True}, conversation={"llm": {"provider": "openai"}}
-    )
+    cfg = clean_config(privacy={"local_only": True}, conversation={"llm": {"provider": "openai"}})
     with pytest.raises(ConfigError, match="self-hosted"):
         enforce_local_only(cfg)
 

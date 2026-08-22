@@ -62,8 +62,7 @@ class Tray:
             from PIL import Image  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
-                "pystray and pillow are required for the tray: "
-                "install dana-agent[control]"
+                "pystray and pillow are required for the tray: install dana-agent[control]"
             ) from exc
 
         image = Image.new("RGB", (64, 64), (30, 30, 30))  # placeholder glyph
@@ -78,9 +77,7 @@ class Tray:
     def start(self) -> None:
         """Build the icon and run it on a daemon thread (returns immediately)."""
         self._icon = self._build_icon()
-        self._thread = threading.Thread(
-            target=self._icon.run, name="dana-tray", daemon=True
-        )
+        self._thread = threading.Thread(target=self._icon.run, name="dana-tray", daemon=True)
         self._thread.start()
         log.info("tray_started", url=self._url)
 
@@ -103,11 +100,7 @@ class Tray:
         # pre-toggle value at this point. The MIC_STATE WS event (emitted by the
         # mute coroutine) drives any dashboard update; the tray label refreshes
         # automatically the next time the menu is opened.
-        coro = (
-            self._controller.unmute()
-            if self._controller.is_muted()
-            else self._controller.mute()
-        )
+        coro = self._controller.unmute() if self._controller.is_muted() else self._controller.mute()
         asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def _open_dashboard(self, _icon: Any = None, _item: Any = None) -> None:

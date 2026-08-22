@@ -1,5 +1,7 @@
 # DaNa — always-on voice assistant
 
+[![CI](https://github.com/tiendat101001/DaNa-Assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/tiendat101001/DaNa-Assistant/actions/workflows/ci.yml)
+
 Always-listening desktop voice assistant for Windows. Wake on **"Hey DaNa"**, hold a
 low-latency spoken conversation, act on the browser and OS through gated tool calls,
 return to idle on **"Bye DaNa"** or a 30-second timeout. Every heavy component — STT,
@@ -27,6 +29,7 @@ backlog/      Task-level tracking, one file per feature
 |---|---|---|
 | Python | ≥ 3.11 | 3.13 recommended |
 | uv | any recent | replaces pip + venv |
+| pre-commit | any recent | optional — `uv tool install pre-commit && pre-commit install` for the same lint/type/secret gates locally |
 | Microphone | — | any Windows audio input device |
 
 **Install uv on Windows** (PowerShell, one-time):

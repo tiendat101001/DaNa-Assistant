@@ -39,7 +39,7 @@ class AssemblyAISTT(STTProvider):
             latency_class="realtime",
         )
 
-    async def stream(self, audio: AsyncIterator[AudioFrame]) -> AsyncIterator[Transcript]:  # type: ignore[override]
+    async def stream(self, audio: AsyncIterator[AudioFrame]) -> AsyncIterator[Transcript]:
         try:
             from assemblyai.streaming.v3 import (  # noqa: PLC0415
                 AsyncRealTimeTranscriber,

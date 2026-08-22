@@ -265,8 +265,10 @@ class AgentController(Controller):
             self._session_task.cancel()
             try:
                 await self._session_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception:
+                log.debug("session_task_suppressed_on_stop")
             self._session_task = None
         self._session = None
         self._state = State.IDLE
@@ -295,9 +297,7 @@ class AgentController(Controller):
                 set_path(self._cfg, change.path, get_path(new_config, change.path))
                 self._hot_side_effect(change.path)
         if changes:
-            self._bus.publish(
-                EventType.CONFIG_CHANGED, {"changes": [c.to_json() for c in changes]}
-            )
+            self._bus.publish(EventType.CONFIG_CHANGED, {"changes": [c.to_json() for c in changes]})
         return changes
 
     def _hot_side_effect(self, path: str) -> None:

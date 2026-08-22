@@ -75,7 +75,7 @@ _SENTENCE_END = re.compile(r"[.!?。！？…\n]")
 # ---------------------------------------------------------------------------
 
 
-class HalfDuplexGateProcessor(FrameProcessor):
+class HalfDuplexGateProcessor(FrameProcessor):  # type: ignore[misc]
     """Drops mic audio while the bot is speaking (half-duplex / no-interrupt mode).
 
     Sits at the head of the pipeline, right after :class:`MuteProcessor`.
@@ -101,7 +101,7 @@ class HalfDuplexGateProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class MuteProcessor(FrameProcessor):
+class MuteProcessor(FrameProcessor):  # type: ignore[misc]
     """Hard mic mute at the head of the pipeline (docs/PLAN.md §8).
 
     Sits immediately after ``transport.input()``. While the shared
@@ -135,7 +135,7 @@ class MuteProcessor(FrameProcessor):
 # ---------------------------------------------------------------------------
 
 
-class WakeGateProcessor(FrameProcessor):
+class WakeGateProcessor(FrameProcessor):  # type: ignore[misc]
     """Gates audio through the IDLE/ACTIVE state machine via AssemblyAI detection.
 
     In IDLE state the transport's Silero VAD drives speech segmentation:
@@ -204,9 +204,7 @@ class WakeGateProcessor(FrameProcessor):
                 pcm = b"".join(self._audio_buffer)
                 self._audio_buffer = []
                 if self._detector and pcm:
-                    self._detect_task = asyncio.ensure_future(
-                        self._detect_and_activate(pcm)
-                    )
+                    self._detect_task = asyncio.ensure_future(self._detect_and_activate(pcm))
             elif self._active:
                 await self.push_frame(frame, direction)
 
@@ -254,7 +252,7 @@ class WakeGateProcessor(FrameProcessor):
 # ---------------------------------------------------------------------------
 
 
-class BrainProcessor(FrameProcessor):
+class BrainProcessor(FrameProcessor):  # type: ignore[misc]
     """Converts final transcript frames into LLM response frames.
 
     Listens for ``TranscriptionFrame`` from the STT service, calls the
@@ -334,7 +332,8 @@ class BrainProcessor(FrameProcessor):
                     from dana_agent.actions.audit import redact_arguments  # noqa: PLC0415
 
                     safe_args = redact_arguments(dict(event.arguments))
-                    preview = f"{event.tool}({', '.join(f'{k}={v!r}' for k, v in safe_args.items())})"
+                    arg_pairs = ", ".join(f"{k}={v!r}" for k, v in safe_args.items())
+                    preview = f"{event.tool}({arg_pairs})"
                     log.info(
                         "confirmation_required",
                         tool=event.tool,
@@ -366,7 +365,7 @@ class BrainProcessor(FrameProcessor):
 # ---------------------------------------------------------------------------
 
 
-class ProviderTTSProcessor(FrameProcessor):
+class ProviderTTSProcessor(FrameProcessor):  # type: ignore[misc]
     """Wraps our ``TTSProvider`` ABC in pipecat's frame protocol.
 
     Collects ``LLMTextFrame`` tokens, flushes them to the provider in configurable
@@ -483,7 +482,7 @@ class ProviderTTSProcessor(FrameProcessor):
 # ---------------------------------------------------------------------------
 
 
-class S2SProcessor(FrameProcessor):
+class S2SProcessor(FrameProcessor):  # type: ignore[misc]
     """Bridges an ``S2SProvider`` into the pipecat frame protocol for the
     speech-to-speech pipeline (the alternative to the STT+brain+TTS cascade).
 
@@ -514,9 +513,7 @@ class S2SProcessor(FrameProcessor):
         if isinstance(frame, InputAudioRawFrame):
             if self._task is None:
                 self._task = asyncio.ensure_future(self._run())
-            await self._audio_queue.put(
-                AudioFrame(pcm=frame.audio, sample_rate=self._sample_rate)
-            )
+            await self._audio_queue.put(AudioFrame(pcm=frame.audio, sample_rate=self._sample_rate))
 
         elif isinstance(frame, (InterruptionFrame, CancelFrame, EndFrame)):
             await self._stop()

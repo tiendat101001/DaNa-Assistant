@@ -119,9 +119,7 @@ async def _run_session(
 
     run_task = asyncio.create_task(session.run())
     stop_task = asyncio.create_task(stop_event.wait())
-    done, pending = await asyncio.wait(
-        [run_task, stop_task], return_when=asyncio.FIRST_COMPLETED
-    )
+    done, pending = await asyncio.wait([run_task, stop_task], return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
 

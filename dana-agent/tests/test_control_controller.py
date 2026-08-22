@@ -55,7 +55,9 @@ async def test_register_and_resolve_confirmation() -> None:
     sub = bus.subscribe()
     try:
         event = ConfirmationRequired(
-            id="c1", tool="delete_file", arguments={"path": "x"},
+            id="c1",
+            tool="delete_file",
+            arguments={"path": "x"},
             reversibility=Reversibility.DESTRUCTIVE,
         )
         ctrl.register_confirmation(event)

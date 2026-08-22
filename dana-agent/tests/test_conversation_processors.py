@@ -7,6 +7,7 @@ BrainProcessor, and ProviderTTSProcessor.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from pipecat.frames.frames import (
@@ -38,20 +39,19 @@ from dana_agent.providers.registry import build_actions
 from dana_agent.providers.tts.mock import MockTTS
 from tests.fakes.chat import ScriptedChatModel
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 async def collect_frames(
-    processor,
-    frames_to_send: list[tuple],
-) -> list:
+    processor: Any,
+    frames_to_send: list[tuple[Any, FrameDirection]],
+) -> list[Any]:
     """Push frames into the processor and collect what it pushes downstream."""
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(frame, direction: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(frame: Any, direction: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(frame)
 
     processor.push_frame = capture
@@ -68,7 +68,7 @@ def transcription(text: str) -> TranscriptionFrame:
     return TranscriptionFrame(text=text, user_id="user1", timestamp="0")
 
 
-def make_brain(turns: list[dict]) -> Brain:
+def make_brain(turns: list[dict[str, Any]]) -> Brain:
     model = ScriptedChatModel(turns=turns)
     gate = ActionGate(build_actions(ActionsConfig()), policy="standard")
     return Brain(model, gate, system_prompt="You are DaNa.")
@@ -177,8 +177,7 @@ async def test_mute_drops_vad_frames_when_muted() -> None:
         ],
     )
     assert not any(
-        isinstance(f, (VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame))
-        for f in frames
+        isinstance(f, (VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame)) for f in frames
     )
 
 
@@ -251,9 +250,9 @@ async def test_wake_gate_activates_on_positive_detection() -> None:
     detector.detect = AsyncMock(return_value=True)
     proc = WakeGateProcessor(detector=detector, bypass=False)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -272,9 +271,9 @@ async def test_wake_gate_no_activation_on_negative_detection() -> None:
     detector.detect = AsyncMock(return_value=False)
     proc = WakeGateProcessor(detector=detector, bypass=False)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -293,9 +292,9 @@ async def test_wake_gate_active_forwards_audio() -> None:
     detector.detect = AsyncMock(return_value=True)
     proc = WakeGateProcessor(detector=detector, bypass=False)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -319,9 +318,9 @@ async def test_wake_gate_end_phrase_returns_to_idle() -> None:
     detector.detect = AsyncMock(return_value=True)
     proc = WakeGateProcessor(detector=detector, bypass=False, end_phrase="Bye DaNa")
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -347,9 +346,9 @@ async def test_wake_gate_normal_transcription_forwarded_when_active() -> None:
     detector.detect = AsyncMock(return_value=True)
     proc = WakeGateProcessor(detector=detector, bypass=False)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -371,9 +370,9 @@ async def test_wake_gate_interruption_deactivates_and_forwards() -> None:
     detector.detect = AsyncMock(return_value=True)
     proc = WakeGateProcessor(detector=detector, bypass=False)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -410,9 +409,9 @@ async def test_wake_gate_end_frame_cancels_detect_task() -> None:
     detector.detect = slow_detect
     proc = WakeGateProcessor(detector=detector, bypass=False)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -444,9 +443,9 @@ async def test_brain_processor_transcription_starts_turn() -> None:
     brain = make_brain([{"text": "Hello there!"}])
     proc = BrainProcessor(brain, session_id="test-session")
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -465,9 +464,9 @@ async def test_brain_processor_empty_transcription_ignored() -> None:
     brain = make_brain([{"text": "Hello!"}])
     proc = BrainProcessor(brain, session_id="test-session")
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -484,9 +483,9 @@ async def test_brain_processor_emits_llm_text_frames() -> None:
     brain = make_brain([{"text": "Hello there!"}])
     proc = BrainProcessor(brain, session_id="test-session")
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -504,9 +503,9 @@ async def test_brain_processor_sets_bot_gate_speaking_true_then_false() -> None:
     bot_gate = BotSpeakingGate()
     proc = BrainProcessor(brain, session_id="test-session", bot_gate=bot_gate)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -523,9 +522,9 @@ async def test_brain_processor_interruption_cancels_turn() -> None:
     brain = make_brain([{"text": "Hello there!"}])
     proc = BrainProcessor(brain, session_id="test-session")
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -544,9 +543,9 @@ async def test_brain_processor_non_transcription_frames_forwarded() -> None:
     brain = make_brain([{"text": "Hello!"}])
     proc = BrainProcessor(brain, session_id="test-session")
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -569,9 +568,9 @@ async def test_tts_processor_chunk_sentences_1_flushes_on_sentence() -> None:
     provider = MockTTS(TTSConfig())
     proc = ProviderTTSProcessor(provider, chunk_sentences=1)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -588,9 +587,9 @@ async def test_tts_processor_chunk_sentences_0_holds_until_end() -> None:
     provider = MockTTS(TTSConfig())
     proc = ProviderTTSProcessor(provider, chunk_sentences=0)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -613,9 +612,9 @@ async def test_tts_processor_emits_audio_with_pcm_bytes() -> None:
     provider = MockTTS(TTSConfig())
     proc = ProviderTTSProcessor(provider, chunk_sentences=1)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture
@@ -635,9 +634,9 @@ async def test_tts_processor_interruption_cancels_and_forwards() -> None:
     provider = MockTTS(TTSConfig())
     proc = ProviderTTSProcessor(provider, chunk_sentences=1)
 
-    collected: list = []
+    collected: list[Any] = []
 
-    async def capture(f, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
         collected.append(f)
 
     proc.push_frame = capture

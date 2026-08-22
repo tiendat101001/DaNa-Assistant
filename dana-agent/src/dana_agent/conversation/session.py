@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-class _LatencyObserver(BaseObserver):
+class _LatencyObserver(BaseObserver):  # type: ignore[misc]
     """Records per-turn latency taps and emits structlog ``latency`` events.
 
     Tracks three pipeline stages:

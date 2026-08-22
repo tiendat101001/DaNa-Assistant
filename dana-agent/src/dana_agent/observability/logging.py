@@ -79,9 +79,7 @@ def _redacting_renderer(inner: structlog.typing.Processor) -> structlog.typing.P
     """Wrap a terminal renderer so it redacts transcript PII first. Applied to the
     console and file sinks; the EventBus tap upstream keeps the full text."""
 
-    def _render(
-        logger: object, method: str, event_dict: MutableMapping[str, Any]
-    ) -> Any:
+    def _render(logger: object, method: str, event_dict: MutableMapping[str, Any]) -> Any:
         return inner(logger, method, _redact_pii(event_dict))
 
     return _render
@@ -122,9 +120,7 @@ def configure_logging(level: str = "INFO", *, json_logs: bool | None = None) -> 
     # Console handler
     # ------------------------------------------------------------------
     console_renderer: structlog.typing.Processor = (
-        structlog.processors.JSONRenderer()
-        if json_logs
-        else structlog.dev.ConsoleRenderer()
+        structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
     )
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(int_level)
