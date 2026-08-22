@@ -308,3 +308,29 @@ async def test_media_next_off_allowlist_page_refused() -> None:
     assert result.ok is False
     assert "off-allowlist" in (result.error or "")
     assert page.clicks == []
+
+
+# --- browser_zoom (view state, arxiv-style reading) --------------------------
+
+
+async def test_zoom_sends_native_chromium_chords() -> None:
+    provider = make_provider(["arxiv.org"])
+    page = browser_with_fake_page(provider, FakePage(url="https://arxiv.org/abs/2401.1"))
+    for action in ("in", "out", "reset"):
+        result = await provider.execute(Action("browser_zoom", {"action": action}))
+        assert result.ok is True, result.error
+    assert page.key_presses == ["Control+=", "Control+-", "Control+0"]
+
+
+async def test_zoom_unknown_action_refused() -> None:
+    provider = make_provider(["arxiv.org"])
+    page = browser_with_fake_page(provider, FakePage(url="https://arxiv.org"))
+    result = await provider.execute(Action("browser_zoom", {"action": "max"}))
+    assert result.ok is False
+    assert "zoom action" in (result.error or "")
+    assert page.key_presses == []
+
+
+def test_classify_zoom_is_read_only() -> None:
+    provider = make_provider()
+    assert provider.classify(Action("browser_zoom", {"action": "in"})) is (Reversibility.READ_ONLY)

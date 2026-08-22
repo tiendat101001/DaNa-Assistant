@@ -112,8 +112,14 @@ _KNOWN_TOOLS = frozenset(
         "browser_search",
         "browser_get_state",
         "browser_download",
+        "browser_zoom",
     }
 )
+
+# Zoom chords (browser_zoom) — Chromium's native per-origin zoom via the
+# keyboard: Ctrl+= / Ctrl+- step in/out, Ctrl+0 resets. NOT part of the model
+#-facing _PRESS_KEYS vocabulary: the model names an action, not a chord.
+_ZOOM_CHORDS: dict[str, str] = {"in": "Control+=", "out": "Control+-", "reset": "Control+0"}
 
 # Bounded key vocabulary — a frozenset, never an arbitrary model string. Covers
 # form/navigation keys, HTML5-player shortcut keys (k/j/l/m/f/t/c and digits),
@@ -374,6 +380,9 @@ class BrowserActions(ActionProvider):
         if tool in ("browser_media", "browser_scroll"):
             # Transport control and scrolling are transient (no lasting state,
             # same class as os_media_key); `state` is a pure read.
+            return Reversibility.READ_ONLY
+        if tool == "browser_zoom":
+            # View state only (per-origin zoom level, reset with Ctrl+0).
             return Reversibility.READ_ONLY
         if tool == "browser_press_key":
             # REVERSIBLE, not read-only: Enter can commit what browser_type
@@ -716,6 +725,19 @@ class BrowserActions(ActionProvider):
                 ok=True,
                 output=f"page: {active!r} ({page.url}) | tabs: {len(tabs)} | media: {media_str}",
             )
+
+        if tool == "browser_zoom":
+            if (refusal := self._current_page_refusal(page)) is not None:
+                return refusal
+            zoom_action = str(args.get("action", ""))
+            chord = _ZOOM_CHORDS.get(zoom_action)
+            if chord is None:
+                known = ", ".join(sorted(_ZOOM_CHORDS))
+                return ActionResult(
+                    ok=False, error=f"refused: zoom action must be one of {known}: {zoom_action!r}"
+                )
+            await page.keyboard.press(chord)
+            return ActionResult(ok=True, output=f"zoom {zoom_action}")
 
         if tool == "browser_download":
             return await self._download(args)

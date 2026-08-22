@@ -129,14 +129,13 @@ def configure_logging(level: str = "INFO", *, json_logs: bool | None = None) -> 
     )
 
     # ------------------------------------------------------------------
-    # File handler — always JSON
+    # File handler — human-readable text with levels (INFO, ERROR, etc.)
     # ------------------------------------------------------------------
+    file_renderer = structlog.dev.ConsoleRenderer(colors=False)
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(int_level)
     file_handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(
-            processor=_redacting_renderer(structlog.processors.JSONRenderer())
-        )
+        structlog.stdlib.ProcessorFormatter(processor=_redacting_renderer(file_renderer))
     )
 
     # ------------------------------------------------------------------

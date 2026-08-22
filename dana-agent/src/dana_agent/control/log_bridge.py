@@ -96,6 +96,18 @@ def make_log_sink(bus: EventBus) -> Callable[[MutableMapping[str, Any]], None]:
                 },
                 session_id=event_dict.get("session"),
             )
+        elif event in ("session_start", "session_end"):
+            sid = event_dict.get("session_id") or event_dict.get("session")
+            if sid:
+                bus.publish(
+                    event,
+                    {
+                        "stt": event_dict.get("stt"),
+                        "tts": event_dict.get("tts"),
+                        "bypass_wake": event_dict.get("bypass_wake"),
+                    },
+                    session_id=sid,
+                )
 
     return sink
 

@@ -629,3 +629,24 @@ def test_launch_downloads_not_allowlisted_refused(monkeypatch: pytest.MonkeyPatc
     result = provider._launch("downloads")
     assert result.ok is False
     assert opened == []
+
+
+# --- arxiv adapter ------------------------------------------------------------
+
+
+def test_arxiv_search_url_and_selector() -> None:
+    url = search_url("arxiv", "attention is all you need")
+    assert url == "https://arxiv.org/search/?query=attention+is+all+you+need&searchtype=all"
+    assert ADAPTERS["arxiv"].first_result_selector == "li.arxiv-result p.list-title a"
+
+
+async def test_search_arxiv_navigates_when_allowlisted() -> None:
+    provider = make_provider(["arxiv.org"])
+    page = browser_with_fake_page(provider, FakePage(url="https://arxiv.org"))
+    result = await provider.execute(
+        Action("browser_search", {"query": "attention is all you need", "engine": "arxiv"})
+    )
+    assert result.ok is True, result.error
+    assert page.goto_urls == [
+        "https://arxiv.org/search/?query=attention+is+all+you+need&searchtype=all"
+    ]

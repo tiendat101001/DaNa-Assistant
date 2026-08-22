@@ -383,6 +383,29 @@ CASES: tuple[Case, ...] = (
         "vi",
         (Accepted("browser_media", {"action": one_of("play", "toggle")}),),
     ),
+    Case(
+        "41-arxiv-search-en",
+        "Find the attention is all you need paper on arxiv",
+        "en",
+        (
+            Accepted(
+                "browser_search",
+                {"engine": eq("arxiv"), "query": contains_ci("attention")},
+            ),
+        ),
+    ),
+    Case(
+        "42-translate-abstract-vi",
+        "Dịch tóm tắt của bài báo này sang tiếng Việt",
+        "vi",
+        (Accepted("browser_read_text"),),
+    ),
+    Case(
+        "43-zoom-en",
+        "Zoom in a bit, this formula is tiny",
+        "en",
+        (Accepted("browser_zoom", {"action": eq("in")}),),
+    ),
 )
 
 

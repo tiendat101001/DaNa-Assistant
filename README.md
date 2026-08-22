@@ -157,6 +157,12 @@ without saying "Hey DaNa" first. Requires `ASSEMBLYAI_API_KEY` + `GEMINI_API_KEY
 uv run python -m dana_agent --bypass-wake
 ```
 
+#### With UI
+
+```bash
+uv run python -m dana_agent --bypass-wake --control
+```
+
 ### 4 — Full mode (wake-phrase gated, no UI)
 
 ```bash
@@ -208,7 +214,7 @@ per site; OS actions are off unless enabled):
 ```bash
 DANA_ACTIONS__PROVIDER=browser_os
 DANA_ACTIONS__OS_ACTIONS_ENABLED=true
-DANA_ACTIONS__ALLOWED_DOMAINS=["youtube.com","google.com","duckduckgo.com","wikipedia.org"]
+DANA_ACTIONS__ALLOWED_DOMAINS=["youtube.com","google.com","duckduckgo.com","wikipedia.org","arxiv.org"]
 ```
 
 Then, in English or Vietnamese:
@@ -216,7 +222,9 @@ Then, in English or Vietnamese:
 - **Media** — "open YouTube and play lofi hip hop" (one command), "pause",
   "jump forward 42 seconds", "tua lui 5 giây", "skip to 3:20", "1.5× speed",
   mute, next/previous, "what's playing?"
-- **Web** — search Google/Wikipedia/DDG, read and summarize pages, scroll
+- **Web** — search Google/Wikipedia/DDG/arXiv, read and summarize pages, translate
+  paragraphs and explain formulas (read the page, the brain does the rest),
+  page zoom in/out/reset, scroll
   ("kéo xuống phần bình luận"), tabs ("open a new tab", "switch to the
   YouTube tab"), history ("go back", "that video from earlier"), downloads
   (executables refused)

@@ -187,4 +187,17 @@ class EventBus:
         )
         for sub in tuple(self._subscribers):
             sub._offer(envelope)
+        if session_id:
+            try:
+                from dana_agent.events import get_event_store
+
+                get_event_store().save_event(
+                    session_id=session_id,
+                    event_type=envelope.type,
+                    data=envelope.data,
+                    timestamp=envelope.ts,
+                    seq=envelope.seq,
+                )
+            except Exception:  # noqa: BLE001 — persistence must never break the live stream
+                log.debug("event_persist_failed", session_id=session_id)
         return envelope

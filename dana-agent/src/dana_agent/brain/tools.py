@@ -147,7 +147,10 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "browser_read_text",
-        "Read the visible text of the current page (returns untrusted page data).",
+        "Read the visible text of the current page (returns untrusted page data). "
+        "Call this FIRST whenever the user asks about page content — summarize, "
+        "translate a paragraph/abstract, explain a formula or term — then answer "
+        "from what it returns.",
     ),
     ToolSpec(
         "browser_click",
@@ -236,12 +239,13 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "browser_search",
-        "Search on an allowlisted engine (youtube, google, duckduckgo, wikipedia) "
-        "in one step. With open_first=True, click the first result too — e.g. "
-        "'play lofi on YouTube' is one call.",
+        "Search on an allowlisted engine (youtube, google, duckduckgo, wikipedia, "
+        "arxiv) in one step. With open_first=True, click the first result too — "
+        "e.g. 'play lofi on YouTube' or 'find the attention paper on arxiv' is "
+        "one call.",
         (
             ToolArg("query", str, "The search query."),
-            ToolArg("engine", str, "youtube|google|duckduckgo|wikipedia"),
+            ToolArg("engine", str, "youtube|google|duckduckgo|wikipedia|arxiv"),
             ToolArg("open_first", bool, "Also click the first result.", required=False),
         ),
     ),
@@ -249,6 +253,12 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "browser_get_state",
         "Read the current page: title, URL, tab count, and media state — use it "
         "to answer 'what's playing' or verify a step.",
+    ),
+    ToolSpec(
+        "browser_zoom",
+        "Zoom the current page in/out (steps), or reset to 100%. Helps reading "
+        "dense pages (papers, articles).",
+        (ToolArg("action", str, "in|out|reset"),),
     ),
     ToolSpec(
         "browser_download",
