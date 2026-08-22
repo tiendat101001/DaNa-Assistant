@@ -25,9 +25,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 from dana_agent.config import ActionsConfig
+from dana_agent.observability import get_logger
 from dana_agent.providers.base import ActionProvider, Capabilities
 from dana_agent.providers.registry import register
 from dana_agent.types import Action, ActionResult, Reversibility
+
+log = get_logger(__name__)
 
 _NAV_TIMEOUT_MS = 15_000
 # Truncate page text: bounds context growth AND the prompt-injection surface.
@@ -46,8 +49,153 @@ _DESTRUCTIVE_CLICK_WORDS = (
 )
 # The bounded, known tool set. Anything else is OUT_OF_SCOPE.
 _KNOWN_TOOLS = frozenset(
-    {"browser_navigate", "browser_click", "browser_type", "browser_read_text", "browser_screenshot"}
+    {
+        "browser_navigate",
+        "browser_click",
+        "browser_type",
+        "browser_read_text",
+        "browser_screenshot",
+        "browser_press_key",
+        "browser_scroll",
+        "browser_media",
+    }
 )
+
+# Bounded key vocabulary — a frozenset, never an arbitrary model string. Covers
+# form/navigation keys, HTML5-player shortcut keys (k/j/l/m/f/t/c and digits),
+# and a few explicit combos (YouTube speed, Netflix ±10 s variants).
+_PRESS_KEYS: frozenset[str] = frozenset(
+    {
+        "Enter",
+        "Escape",
+        "Tab",
+        "Backspace",
+        "Delete",
+        "Space",
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        *(chr(d) for d in range(ord("0"), ord("9") + 1)),
+        "k",
+        "j",
+        "l",
+        "m",
+        "f",
+        "t",
+        "c",
+        ".",
+        ",",
+        "Shift+.",
+        "Shift+,",
+        "Shift+ArrowLeft",
+        "Shift+ArrowRight",
+    }
+)
+
+_MEDIA_ACTIONS: frozenset[str] = frozenset(
+    {"play", "pause", "toggle", "seek", "seek_to", "rate", "mute", "unmute", "state"}
+)
+_RATE_MIN, _RATE_MAX = 0.25, 2.0
+# A relative seek is clamped to ±6 h — generous for any real media, and it
+# bounds runaway model arithmetic.
+_SEEK_DELTA_LIMIT_S = 6 * 60 * 60
+_SCROLL_MAX_PX = 3_000
+
+# Provider-owned canned JavaScript for the media engine. The model NEVER
+# authors JS — it picks an action name; the script below is the entire
+# executable surface, and only whitelisted numeric/bool arguments flow in.
+# Each script carries a ``/* dana:<name> */`` marker (contract-tested offline).
+_MEDIA_SCRIPTS: dict[str, str] = {
+    "state": (
+        "/* dana:state */ () => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media';"
+        " const fmt = (s) => isFinite(s) ? Math.floor(s/60) + ':' + "
+        "String(Math.floor(s%60)).padStart(2,'0') : '?';"
+        " return {"
+        " title: (navigator.mediaSession && navigator.mediaSession.metadata"
+        " && navigator.mediaSession.metadata.title) || document.title,"
+        " playing: !v.paused, position: v.currentTime,"
+        " duration: isFinite(v.duration) ? v.duration : null,"
+        " rate: v.playbackRate, muted: v.muted,"
+        " at: fmt(v.currentTime) + (isFinite(v.duration) ? ' / ' + fmt(v.duration) : '')"
+        "}; }"
+    ),
+    "play": (
+        "/* dana:play */ () => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media'; v.play(); return 'ok'; }"
+    ),
+    "pause": (
+        "/* dana:pause */ () => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media'; v.pause(); return 'ok'; }"
+    ),
+    "toggle": (
+        "/* dana:toggle */ () => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media'; if (v.paused) { v.play(); } else { v.pause(); }"
+        " return 'ok'; }"
+    ),
+    "seek": (
+        "/* dana:seek */ ([d]) => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media';"
+        " const max = isFinite(v.duration) ? v.duration : Infinity;"
+        " v.currentTime = Math.max(0, Math.min(max - 0.05, v.currentTime + d));"
+        " return v.currentTime; }"
+    ),
+    "seek_to": (
+        "/* dana:seek_to */ ([t]) => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media';"
+        " const max = isFinite(v.duration) ? v.duration : Infinity;"
+        " v.currentTime = Math.max(0, Math.min(max - 0.05, t));"
+        " return v.currentTime; }"
+    ),
+    "rate": (
+        "/* dana:rate */ ([r]) => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media'; v.playbackRate = r; return v.playbackRate; }"
+    ),
+    "mute": (
+        "/* dana:mute */ ([m]) => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media'; v.muted = m; return v.muted; }"
+    ),
+    # scroll helper shared by browser_scroll(to=...)
+    "scroll_to": (
+        "/* dana:scroll_to */ ([w]) => {"
+        " if (w === 'top') { window.scrollTo({top: 0}); }"
+        " else { window.scrollTo({top: document.documentElement.scrollHeight}); }"
+        " return window.scrollY; }"
+    ),
+}
+# The YouTube-style player key used as the last-resort play/pause fallback.
+_PLAY_PAUSE_KEY = "k"
+
+
+def _fmt_seconds(s: float) -> str:
+    m, sec = divmod(int(s), 60)
+    return f"{m}:{sec:02d}"
+
+
+def _speakable_media(result: Any) -> str:
+    """Turn the state-script dict into a short, TTS-friendly string."""
+    if not isinstance(result, dict):
+        return str(result)
+    title = str(result.get("title", "?"))
+    verb = "playing" if result.get("playing") else "paused"
+    at = str(result.get("at", "?"))
+    rate = result.get("rate")
+    suffix = f" ({rate}x)" if rate not in (None, 1, 1.0) else ""
+    muted = " [muted]" if result.get("muted") else ""
+    return f"{verb}: '{title}' at {at}{suffix}{muted}"
 
 
 @register("actions", "browser")
@@ -107,6 +255,15 @@ class BrowserActions(ActionProvider):
             )
         if tool in ("browser_read_text", "browser_screenshot"):
             return Reversibility.READ_ONLY
+        if tool in ("browser_media", "browser_scroll"):
+            # Transport control and scrolling are transient (no lasting state,
+            # same class as os_media_key); `state` is a pure read.
+            return Reversibility.READ_ONLY
+        if tool == "browser_press_key":
+            # REVERSIBLE, not read-only: Enter can commit what browser_type
+            # filled (a search submit is the common case, a message send the
+            # rare one). Standard policy runs+audits it; conservative confirms.
+            return Reversibility.REVERSIBLE
         if tool == "browser_type":
             return Reversibility.REVERSIBLE  # fills a field; nothing committed yet
         if tool == "browser_click":
@@ -148,8 +305,25 @@ class BrowserActions(ActionProvider):
             self._ctx = await self._pw.chromium.launch_persistent_context(
                 user_data_dir=str(self._profile_dir),
                 headless=self._headless,
+                # Downloads only via the explicit browser_download tool (M-later);
+                # never as a side effect of a click.
+                accept_downloads=False,
                 args=["--no-first-run", "--no-default-browser-check"],
             )
+
+            def _on_popup(popup: Any) -> None:
+                # An allowlisted page can still be coerced into opening windows:
+                # every new page gets the allowlist re-asserted, and an
+                # off-allowlist popup is closed immediately.
+                url = str(getattr(popup, "url", "") or "")
+                if url and url != "about:blank" and not self._host_allowed(url):
+                    log.warning("popup_blocked_off_allowlist", url=url)
+                    try:
+                        popup.close()
+                    except Exception:  # noqa: BLE001 — best-effort guard, never fatal
+                        log.debug("popup_close_failed")
+
+            self._ctx.on("page", _on_popup)
             self._ctx.set_default_timeout(_NAV_TIMEOUT_MS)  # auto-wait cap; NO sleeps
             self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
         return self._page
@@ -234,6 +408,52 @@ class BrowserActions(ActionProvider):
             await field.first.fill(str(args.get("text", "")))  # clears+types, auto-waits
             return ActionResult(ok=True, output="typed")
 
+        if tool == "browser_press_key":
+            if (refusal := self._current_page_refusal(page)) is not None:
+                return refusal
+            key = str(args.get("key", ""))
+            if key not in _PRESS_KEYS:
+                return ActionResult(
+                    ok=False, error=f"refused: key not in bounded vocabulary: {key!r}"
+                )
+            await page.keyboard.press(key)
+            return ActionResult(ok=True, output=f"pressed {key}")
+
+        if tool == "browser_scroll":
+            if (refusal := self._current_page_refusal(page)) is not None:
+                return refusal
+            to = args.get("to")
+            dy = args.get("dy")
+            target = args.get("target")
+            supplied = sum(v is not None for v in (to, dy, target))
+            if supplied != 1:
+                return ActionResult(
+                    ok=False, error="refused: exactly one of 'to', 'dy', 'target' is required"
+                )
+            if to is not None:
+                where = str(to)
+                if where not in ("top", "bottom"):
+                    return ActionResult(
+                        ok=False, error=f"refused: 'to' must be top|bottom: {where!r}"
+                    )
+                y = await page.evaluate(_MEDIA_SCRIPTS["scroll_to"], [where])
+                return ActionResult(ok=True, output=f"scrolled to {where} (scrollY={y})")
+            if dy is not None:
+                if not isinstance(dy, int) or isinstance(dy, bool):
+                    return ActionResult(ok=False, error=f"refused: 'dy' must be an integer: {dy!r}")
+                pixels = max(-_SCROLL_MAX_PX, min(_SCROLL_MAX_PX, dy))
+                await page.mouse.wheel(0, pixels)
+                return ActionResult(ok=True, output=f"scrolled {pixels:+d}px")
+            # target is not None — scroll the first text match into view.
+            locator = page.get_by_text(str(target))
+            await locator.first.scroll_into_view_if_needed()
+            return ActionResult(ok=True, output=f"scrolled to {str(target)!r}")
+
+        if tool == "browser_media":
+            if (refusal := self._current_page_refusal(page)) is not None:
+                return refusal
+            return await self._media(page, args)
+
         # tool == "browser_screenshot" (guaranteed by _KNOWN_TOOLS)
         if (refusal := self._current_page_refusal(page)) is not None:
             return refusal
@@ -249,3 +469,81 @@ class BrowserActions(ActionProvider):
             return str(out_path)
 
         return ActionResult(ok=True, output=await asyncio.to_thread(_write_screenshot, png))
+
+    # --- media engine (canned JS only; the model never authors scripts) ---
+
+    async def _media(self, page: Any, args: dict[str, object]) -> ActionResult:
+        action = str(args.get("action", ""))
+        if action not in _MEDIA_ACTIONS:
+            return ActionResult(ok=False, error=f"refused: unknown media action {action!r}")
+
+        if action == "seek":
+            delta = self._num(args, "delta_s")
+            if delta is None:
+                return ActionResult(ok=False, error="refused: seek requires a numeric 'delta_s'")
+            result = await self._eval_media(page, "seek", delta)
+            if isinstance(result, (int, float)):
+                return ActionResult(ok=True, output=f"position {_fmt_seconds(float(result))}")
+            return self._no_media_result(result)
+
+        if action == "seek_to":
+            pos = self._num(args, "position_s")
+            if pos is None:
+                return ActionResult(
+                    ok=False, error="refused: seek_to requires a numeric 'position_s'"
+                )
+            if pos < 0:
+                return ActionResult(ok=False, error=f"refused: position_s must be >= 0: {pos}")
+            result = await self._eval_media(page, "seek_to", pos)
+            if isinstance(result, (int, float)):
+                return ActionResult(ok=True, output=f"position {_fmt_seconds(float(result))}")
+            return self._no_media_result(result)
+
+        if action == "rate":
+            rate = self._num(args, "rate")
+            if rate is None or not (_RATE_MIN <= rate <= _RATE_MAX):
+                return ActionResult(
+                    ok=False,
+                    error=f"refused: rate must be within {_RATE_MIN}-{_RATE_MAX}: {rate!r}",
+                )
+            result = await self._eval_media(page, "rate", rate)
+            return ActionResult(ok=True, output=f"playback rate {result}x")
+
+        if action in ("mute", "unmute"):
+            result = await self._eval_media(page, "mute", action == "mute")
+            return ActionResult(ok=True, output="muted" if result else "unmuted")
+
+        if action == "state":
+            result = await self._eval_media(page, "state", None)
+            if isinstance(result, dict):
+                return ActionResult(ok=True, output=_speakable_media(result))
+            return self._no_media_result(result)
+
+        # play / pause / toggle — with the player-key fallback when the page
+        # has no <video>/<audio> element the script can reach.
+        result = await self._eval_media(page, action, None)
+        if result == "no-media":
+            await page.keyboard.press(_PLAY_PAUSE_KEY)
+            return ActionResult(
+                ok=True, output=f"no media element; pressed {_PLAY_PAUSE_KEY!r} (player key)"
+            )
+        return ActionResult(ok=True, output=action)
+
+    async def _eval_media(self, page: Any, script_name: str, arg: object) -> Any:
+        if arg is None:
+            return await page.evaluate(_MEDIA_SCRIPTS[script_name])
+        return await page.evaluate(_MEDIA_SCRIPTS[script_name], [arg])
+
+    @staticmethod
+    def _num(args: dict[str, object], name: str) -> float | None:
+        """Pull a validated, range-clamped numeric arg; None ⇒ missing/invalid."""
+        raw = args.get(name)
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+            return None  # missing, prose, or bool — refuse upstream
+        return max(-_SEEK_DELTA_LIMIT_S, min(_SEEK_DELTA_LIMIT_S, float(raw)))
+
+    @staticmethod
+    def _no_media_result(result: object) -> ActionResult:
+        if result == "no-media":
+            return ActionResult(ok=False, error="no media element on this page")
+        return ActionResult(ok=False, error=f"media error: {result!r}")

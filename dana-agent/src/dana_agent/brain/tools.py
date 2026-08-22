@@ -156,6 +156,38 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "browser_screenshot",
         "Capture a screenshot of the current page.",
     ),
+    ToolSpec(
+        "browser_press_key",
+        "Press a single keyboard key (bounded vocabulary: Enter, Escape, arrows, "
+        "player keys k/j/l/m/f/t/c, digits 0-9, Space, Home/End, Shift+. etc). "
+        "Use Enter to submit a filled form or search.",
+        (ToolArg("key", str, "One key from the allowed vocabulary, e.g. 'Enter' or 'l'."),),
+    ),
+    ToolSpec(
+        "browser_scroll",
+        "Scroll the current page: by pixels (dy, negative = up), to top/bottom, "
+        "or until a text snippet is in view.",
+        (
+            ToolArg("dy", int, "Pixels to scroll down (negative = up).", required=False),
+            ToolArg("to", str, "'top' or 'bottom'.", required=False),
+            ToolArg("target", str, "Visible text to scroll into view.", required=False),
+        ),
+    ),
+    ToolSpec(
+        "browser_media",
+        "Control the media (video/audio) on the current page: play, pause, "
+        "toggle, seek by delta seconds (e.g. +42 or -5), seek to an absolute "
+        "position in seconds, set playback rate 0.25-2.0, mute/unmute, or read "
+        "state (title, position, duration).",
+        (
+            ToolArg("action", str, "play|pause|toggle|seek|seek_to|rate|mute|unmute|state"),
+            ToolArg("delta_s", float, "Relative seek in seconds (seek).", required=False),
+            ToolArg(
+                "position_s", float, "Absolute seek position in seconds (seek_to).", required=False
+            ),
+            ToolArg("rate", float, "Playback rate 0.25-2.0 (rate).", required=False),
+        ),
+    ),
 )
 
 OS_TOOLS: tuple[ToolSpec, ...] = (
