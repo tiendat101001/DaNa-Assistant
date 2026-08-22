@@ -24,6 +24,10 @@ class SiteAdapter:
     search_template: str  # "{q}" is the URL-encoded query slot
     first_result_selector: str | None = None
     verified: str = ""
+    # Player next/prev controls for browser_media(next|prev); None ⇒ the site
+    # has no in-page control (playlists aside) — route via os_media_key.
+    next_selector: str | None = None
+    prev_selector: str | None = None
 
 
 ADAPTERS: dict[str, SiteAdapter] = {
@@ -33,7 +37,10 @@ ADAPTERS: dict[str, SiteAdapter] = {
         search_template="https://www.youtube.com/results?search_query={q}",
         # First organic video tile on the results page.
         first_result_selector="ytd-video-renderer ytd-thumbnail a",
-        verified="2026-08-22",
+        # Player next-track button (present on watch pages; disabled at the end
+        # of a plain video — the click auto-wait handles that as an error).
+        next_selector=".ytp-next-button",
+        verified="2026-08-22 live probe ok (selector, open_first->/watch, media state)",
     ),
     "google": SiteAdapter(
         name="google",
@@ -55,7 +62,7 @@ ADAPTERS: dict[str, SiteAdapter] = {
         search_template="https://en.wikipedia.org/w/index.php?search={q}",
         # Note: an exact-title match lands directly on the article page.
         first_result_selector=".mw-search-result a",
-        verified="2026-08-22",
+        verified="2026-08-22 live probe ok",
     ),
 }
 

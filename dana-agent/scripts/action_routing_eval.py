@@ -166,6 +166,7 @@ CASES: tuple[Case, ...] = (
         "Next video please",
         "en",
         (
+            Accepted("browser_media", {"action": eq("next")}),
             Accepted("os_media_key", {"key": eq("next")}),
             Accepted("browser_click", {"text": contains_ci("next")}),
         ),
@@ -235,6 +236,152 @@ CASES: tuple[Case, ...] = (
         "Chụp màn hình trang này lại",
         "vi",
         (Accepted("browser_screenshot"),),
+    ),
+    Case(
+        "21-prev-vi",
+        "Video trước đó",
+        "vi",
+        (
+            Accepted("browser_media", {"action": eq("prev")}),
+            Accepted("os_media_key", {"key": eq("prev")}),
+        ),
+    ),
+    Case(
+        "22-read-page-vi",
+        "Đọc nội dung trang này",
+        "vi",
+        (Accepted("browser_read_text"),),
+    ),
+    Case(
+        "23-clipboard-set-en",
+        "Copy this into my clipboard: meeting notes at 3pm",
+        "en",
+        (Accepted("os_clipboard_set", {"text": contains_ci("meeting")}),),
+    ),
+    Case(
+        "24-clipboard-get-vi",
+        "Trong clipboard có gì vậy?",
+        "vi",
+        (Accepted("os_clipboard_get"),),
+    ),
+    Case(
+        "25-minimize-vi",
+        "Thu nhỏ cửa sổ này lại",
+        "vi",
+        (Accepted("os_window", {"action": eq("minimize")}),),
+    ),
+    Case(
+        "26-snap-en",
+        "Snap the Discord window to the right half of the screen",
+        "en",
+        (Accepted("os_window", {"action": eq("snap_right"), "title": contains_ci("discord")}),),
+    ),
+    Case(
+        "27-sysmute-vi",
+        "Tắt tiếng toàn hệ thống",
+        "vi",
+        (
+            Accepted("os_volume", {"action": eq("mute")}),
+            Accepted("os_media_key", {"key": eq("mute")}),
+        ),
+    ),
+    Case(
+        "28-unmute-video-en",
+        "Unmute the video",
+        "en",
+        (
+            Accepted("browser_media", {"action": eq("unmute")}),
+            Accepted("os_volume", {"action": eq("unmute")}),
+        ),
+    ),
+    Case(
+        "29-type-en",
+        "Type 'hello world' into the search box",
+        "en",
+        (
+            Accepted(
+                "browser_type",
+                {"text": contains_ci("hello"), "into": contains_ci("search")},
+            ),
+        ),
+    ),
+    Case(
+        "30-enter-vi",
+        "Nhấn phím Enter",
+        "vi",
+        (Accepted("browser_press_key", {"key": eq("Enter")}),),
+    ),
+    Case(
+        "31-close-tab-vi",
+        "Đóng tab này đi",
+        "vi",
+        (Accepted("browser_tab", {"action": eq("close")}),),
+    ),
+    Case(
+        "32-switch-tab-en",
+        "Switch to the YouTube tab",
+        "en",
+        (Accepted("browser_tab", {"action": eq("switch"), "title": contains_ci("youtube")}),),
+    ),
+    Case(
+        "33-forward-en",
+        "Go forward a page",
+        "en",
+        (Accepted("browser_history", {"action": eq("forward")}),),
+    ),
+    Case(
+        "34-volume-50-vi",
+        "Tăng âm lượng hệ thống lên 50",
+        "vi",
+        (Accepted("os_volume", {"action": eq("set"), "percent": approx(50, 2)}),),
+    ),
+    Case(
+        "35-ddg-en",
+        "Search DuckDuckGo for raspberry pi",
+        "en",
+        (
+            Accepted(
+                "browser_search", {"engine": eq("duckduckgo"), "query": contains_ci("raspberry")}
+            ),
+        ),
+    ),
+    Case(
+        "36-scroll-top-vi",
+        "Kéo lên đầu trang",
+        "vi",
+        (
+            Accepted("browser_scroll", {"to": eq("top")}),
+            Accepted(
+                "browser_scroll", {"dy": lambda v: isinstance(v, (int, float)) and float(v) < 0}
+            ),
+        ),
+    ),
+    Case(
+        "37-seek-7min-vi",
+        "Tua nhanh đến phút thứ 7",
+        "vi",
+        (Accepted("browser_media", {"action": eq("seek_to"), "position_s": approx(420, 15)}),),
+    ),
+    Case(
+        "38-screenshot-en",
+        "Take a screenshot of this page",
+        "en",
+        (Accepted("browser_screenshot"),),
+    ),
+    Case(
+        "39-time-left-en",
+        "How much time is left in this video?",
+        "en",
+        (
+            Accepted("browser_media", {"action": eq("state")}),
+            Accepted("browser_get_state"),
+        ),
+    ),
+    Case(
+        "40-resume-vi",
+        "Phát tiếp đi",
+        "vi",
+        (Accepted("browser_media", {"action": one_of("play", "toggle")}),),
     ),
 )
 

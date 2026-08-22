@@ -59,13 +59,25 @@ async def test_live_search_first_result_selector_matches(engine: str, tmp_path: 
         )
         assert result.ok is True, result.error
         page = provider._page
+        # Google's IP-reputation wall: /sorry CAPTCHA — not selector drift.
+        if engine == "google" and "/sorry/" in str(page.url):
+            pytest.skip("Google served its bot wall to this network — verify from a residential IP")
         selector = ADAPTERS[engine].first_result_selector
         assert selector, engine
-        count = await page.locator(selector).count()
-        assert count >= 1, (
-            f"selector drift: {engine} first_result_selector {selector!r} matched {count} "
-            f"elements on {page.url} — update the adapter and re-stamp 'verified'"
-        )
+        # Results render client-side AFTER domcontentloaded — wait for the
+        # selector (bounded) before deciding anything about drift.
+        try:
+            await page.locator(selector).first.wait_for(timeout=15_000)
+        except Exception:  # noqa: BLE001 — classify below before failing
+            # DDG's silent anomaly page: the results shell loads but no result
+            # article ever hydrates (IP reputation, headless). Skip, not fail.
+            if engine == "duckduckgo" and await page.locator("article").count() == 0:
+                pytest.skip("DDG served its bot challenge to this network — no results rendered")
+            pytest.fail(
+                f"selector drift: {engine} first_result_selector {selector!r} never appeared "
+                f"on {page.url} within 15s — update the adapter and re-stamp 'verified'"
+            )
+        assert await page.locator(selector).count() >= 1
     finally:
         await provider.aclose()
 
@@ -82,7 +94,8 @@ async def test_live_youtube_open_first_reaches_watch_page(tmp_path: Path) -> Non
         assert result.ok is True, result.error
         page = provider._page
         assert "/watch" in str(page.url), f"landed on {page.url}"
-        assert await page.locator("video").count() >= 1
+        # The player renders after navigation — wait for it, then read state.
+        await page.wait_for_selector("video", timeout=15_000)
         state = await provider.execute(Action("browser_media", {"action": "state"}))
         assert state.ok is True, state.error
         assert "paused" in state.output or "playing" in state.output
@@ -109,7 +122,10 @@ def _write_fixture_site(site_dir: Path) -> None:
         handle.writeframes(bytes(frames))
     (site_dir / "media.html").write_text(
         "<html><body><h1>Local Fixture Player</h1>"
-        '<audio controls src="tone.wav"></audio>'
+        # preload="auto": without buffered data Chromium reports an EMPTY
+        # seekable range and silently ignores currentTime assignment (found by
+        # this very probe) — the fixture must buffer before we seek it.
+        '<audio controls preload="auto" src="tone.wav"></audio>'
         "</body></html>",
         encoding="utf-8",
     )
@@ -147,6 +163,20 @@ async def test_live_media_scripts_against_real_chromium_local(tmp_path: Path) ->
             url = f"http://127.0.0.1:{server.port}/media.html"
             nav = await provider.execute(Action("browser_navigate", {"url": url}))
             assert nav.ok is True, nav.error
+
+            # Fixture-server quirk: without Range support Chromium leaves the
+            # element's seekable range EMPTY even when fully buffered (it then
+            # silently ignores currentTime assignment). A load() re-request
+            # builds the range; real sites (YouTube et al.) serve Range
+            # headers, so production never hits this.
+            page = provider._page
+            await page.evaluate(
+                "() => { const v = document.querySelector('video, audio'); if (v) v.load(); }"
+            )
+            await page.wait_for_function(
+                "() => { const v = document.querySelector('video, audio');"
+                " return v && v.seekable.length && v.seekable.end(0) >= 2.9; }"
+            )
 
             state0: Any = await provider.execute(Action("browser_media", {"action": "state"}))
             assert state0.ok is True, state0.error

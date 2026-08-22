@@ -264,5 +264,47 @@ def test_every_media_script_has_dana_marker_and_no_wildcard_input() -> None:
 
 def test_media_actions_registry_is_bounded() -> None:
     assert _MEDIA_ACTIONS == frozenset(
-        {"play", "pause", "toggle", "seek", "seek_to", "rate", "mute", "unmute", "state"}
+        {
+            "play",
+            "pause",
+            "toggle",
+            "seek",
+            "seek_to",
+            "rate",
+            "mute",
+            "unmute",
+            "next",
+            "prev",
+            "state",
+        }
     )
+
+
+# --- next/prev (adapter-level track skipping) --------------------------------
+
+
+async def test_media_next_on_youtube_page_clicks_player_control() -> None:
+    provider = BrowserActions(ActionsConfig(provider="browser", allowed_domains=["youtube.com"]))
+    page = FakePage(url="https://www.youtube.com/watch?v=x")
+    browser_with_fake_page(provider, page)
+    result = await provider.execute(media("next"))
+    assert result.ok is True, result.error
+    css_clicked = [c["css"] for c in page.clicks if "css" in c]
+    assert css_clicked == [".ytp-next-button"]  # the adapter's player control
+
+
+async def test_media_prev_on_site_without_control_is_honest_error() -> None:
+    provider = make_provider(["example.com"])
+    browser_with_fake_page(provider, FakePage(url="https://example.com/watch"))
+    result = await provider.execute(media("prev"))
+    assert result.ok is False
+    assert "os_media_key" in (result.error or "")  # points at the fallback
+
+
+async def test_media_next_off_allowlist_page_refused() -> None:
+    provider = make_provider(["example.com"])
+    page = browser_with_fake_page(provider, FakePage(url="https://evil.com/watch"))
+    result = await provider.execute(media("next"))
+    assert result.ok is False
+    assert "off-allowlist" in (result.error or "")
+    assert page.clicks == []

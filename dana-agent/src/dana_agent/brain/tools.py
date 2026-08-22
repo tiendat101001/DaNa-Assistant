@@ -194,10 +194,13 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "move by delta seconds (+42 forward, -5 back, e.g. 'jump forward 40 "
         "seconds' or 'go back a bit'); seek_to = ABSOLUTE position in seconds "
         "(e.g. 'skip to 3:20' → position_s=200). Also: play, pause, toggle, "
-        "rate 0.25-2.0, mute/unmute, state (title/position/duration). There is "
-        "no next/previous track here — use os_media_key for that.",
+        "rate 0.25-2.0, mute/unmute, next/prev (jumps via the site's player "
+        "control where mapped, e.g. YouTube; otherwise use os_media_key), and "
+        "state (title/position/duration).",
         (
-            ToolArg("action", str, "play|pause|toggle|seek|seek_to|rate|mute|unmute|state"),
+            ToolArg(
+                "action", str, "play|pause|toggle|seek|seek_to|rate|mute|unmute|next|prev|state"
+            ),
             ToolArg(
                 "delta_s",
                 float,

@@ -152,7 +152,19 @@ _PRESS_KEYS: frozenset[str] = frozenset(
 )
 
 _MEDIA_ACTIONS: frozenset[str] = frozenset(
-    {"play", "pause", "toggle", "seek", "seek_to", "rate", "mute", "unmute", "state"}
+    {
+        "play",
+        "pause",
+        "toggle",
+        "seek",
+        "seek_to",
+        "rate",
+        "mute",
+        "unmute",
+        "state",
+        "next",
+        "prev",
+    }
 )
 _RATE_MIN, _RATE_MAX = 0.25, 2.0
 # A relative seek is clamped to ±6 h — generous for any real media, and it
@@ -854,6 +866,22 @@ class BrowserActions(ActionProvider):
             if isinstance(result, dict):
                 return ActionResult(ok=True, output=_speakable_media(result))
             return self._no_media_result(result)
+
+        if action in ("next", "prev"):
+            # No generic HTML5 API for track-skipping — adapter territory:
+            # click the site's player control if one is mapped for the CURRENT
+            # page; otherwise point at the system media session.
+            from dana_agent.providers.actions.adapters import adapter_for_url  # noqa: PLC0415
+
+            adapter = adapter_for_url(str(getattr(page, "url", "") or ""))
+            selector = getattr(adapter, f"{action}_selector", None) if adapter else None
+            if selector is None:
+                return ActionResult(
+                    ok=False,
+                    error=f"no in-page {action} control for this site — use os_media_key",
+                )
+            await page.locator(selector).first.click()
+            return ActionResult(ok=True, output=action)
 
         # play / pause / toggle — with the player-key fallback when the page
         # has no <video>/<audio> element the script can reach.
