@@ -74,6 +74,18 @@ export class ControlApi {
     return this.request("POST", "/session/stop");
   }
 
+  // Trip the wake gate to ACTIVE — the Talk button. Like saying the wake
+  // phrase: the next spoken sentence goes straight to STT.
+  activate(): Promise<Status & { status: string }> {
+    return this.request("POST", "/session/activate");
+  }
+
+  // Run a typed user turn through the live pipeline (brain answers, TTS
+  // speaks the reply — same events as a spoken turn).
+  submitText(text: string): Promise<{ status: string; text: string }> {
+    return this.request("POST", "/session/turn", { text });
+  }
+
   mute(): Promise<{ muted: boolean }> {
     return this.request("POST", "/mic/mute");
   }

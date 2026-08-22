@@ -101,6 +101,16 @@ class Controller(ABC):
     async def stop_session(self) -> None: ...
 
     @abstractmethod
+    async def activate(self) -> None:
+        """Trip the wake gate to ACTIVE (the UI Talk button — like saying the
+        wake phrase, so speech goes straight to STT)."""
+
+    @abstractmethod
+    async def submit_text(self, text: str) -> None:
+        """Run a typed user turn through the live pipeline (brain answers, TTS
+        speaks the reply)."""
+
+    @abstractmethod
     async def mute(self) -> None: ...
 
     @abstractmethod
@@ -273,6 +283,16 @@ class AgentController(Controller):
         self._session = None
         self._state = State.IDLE
         log.info("session_stopped")
+
+    async def activate(self) -> None:
+        if self._session is None:
+            raise RuntimeError("no session running — start the session first")
+        await self._session.activate()
+
+    async def submit_text(self, text: str) -> None:
+        if self._session is None:
+            raise RuntimeError("no session running — start the session first")
+        await self._session.submit_text(text)
 
     async def resolve_confirmation(self, confirmation_id: str, *, approved: bool) -> bool:
         info = self._pending.pop(confirmation_id, None)

@@ -61,6 +61,16 @@ class FakeController(Controller):
         self.calls.append("stop")
         self._running = False
 
+    async def activate(self) -> None:
+        if not self._running:
+            raise RuntimeError("no session running — start the session first")
+        self.calls.append("activate")
+
+    async def submit_text(self, text: str) -> None:
+        if not self._running:
+            raise RuntimeError("no session running — start the session first")
+        self.calls.append(f"turn:{text}")
+
     async def mute(self) -> None:
         self.calls.append("mute")
         self._muted = True

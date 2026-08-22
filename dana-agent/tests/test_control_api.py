@@ -214,3 +214,47 @@ def test_ws_streams_envelope(client: TestClient, bus: EventBus) -> None:
     assert msg["type"] == "state_transition"
     assert msg["session_id"] == "s1"
     assert msg["data"]["cause"] == "wake"
+
+
+# --- Talk UI: activate + typed turns ------------------------------------------
+
+
+async def test_session_activate_trips_controller(
+    client: TestClient, controller: FakeController
+) -> None:
+    client.post("/api/v1/session/start", headers=AUTH)
+    res = client.post("/api/v1/session/activate", headers=AUTH)
+    assert res.status_code == 200
+    assert res.json()["status"] == "active"
+    assert "activate" in controller.calls
+
+
+async def test_session_activate_without_session_is_409(
+    client: TestClient, controller: FakeController
+) -> None:
+    res = client.post("/api/v1/session/activate", headers=AUTH)
+    assert res.status_code == 409
+    assert "start the session" in res.json()["detail"]
+
+
+async def test_session_turn_submits_text(client: TestClient, controller: FakeController) -> None:
+    client.post("/api/v1/session/start", headers=AUTH)
+    res = client.post("/api/v1/session/turn", json={"text": "play lofi on youtube"}, headers=AUTH)
+    assert res.status_code == 200
+    assert res.json()["status"] == "submitted"
+    assert "turn:play lofi on youtube" in controller.calls
+
+
+async def test_session_turn_rejects_empty_text(
+    client: TestClient, controller: FakeController
+) -> None:
+    client.post("/api/v1/session/start", headers=AUTH)
+    res = client.post("/api/v1/session/turn", json={"text": "   "}, headers=AUTH)
+    assert res.status_code == 422
+
+
+async def test_session_turn_without_session_is_409(
+    client: TestClient, controller: FakeController
+) -> None:
+    res = client.post("/api/v1/session/turn", json={"text": "hello"}, headers=AUTH)
+    assert res.status_code == 409

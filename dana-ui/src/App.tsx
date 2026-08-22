@@ -15,6 +15,7 @@ import { TokenGate } from "./features/TokenGate";
 import { StatusBar } from "./features/StatusBar";
 import { SessionControls } from "./features/SessionControls";
 import { MicToggle } from "./features/MicToggle";
+import { TalkView } from "./features/TalkView";
 import { Transcript, type TranscriptLine } from "./features/Transcript";
 import { FsmView } from "./features/FsmView";
 import { LatencyWaterfall } from "./features/LatencyWaterfall";
@@ -30,6 +31,7 @@ export function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) ?? "");
   const [authed, setAuthed] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [tab, setTab] = useState<"talk" | "dashboard">("talk");
 
   const [status, setStatus] = useState<Status | null>(null);
   const [transitions, setTransitions] = useState<StateTransition[]>([]);
@@ -138,6 +140,22 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <h1>DaNa</h1>
+        <nav className="tabs" aria-label="Views">
+          <button
+            className={tab === "talk" ? "tab active" : "tab"}
+            onClick={() => setTab("talk")}
+            aria-current={tab === "talk"}
+          >
+            🎙 Talk
+          </button>
+          <button
+            className={tab === "dashboard" ? "tab active" : "tab"}
+            onClick={() => setTab("dashboard")}
+            aria-current={tab === "dashboard"}
+          >
+            🛠 Dashboard
+          </button>
+        </nav>
         <StatusBar status={status} connected={connected} />
       </header>
 
@@ -145,38 +163,50 @@ export function App() {
         <ConfirmationPrompt items={confirmations} onResolve={resolveConfirmation} />
       )}
 
-      <main className="grid">
-        <section className="card controls">
-          <h2>Session</h2>
-          <SessionControls api={api} onChange={refreshStatus} running={status?.session_running} />
-          <MicToggle api={api} muted={status?.muted ?? false} />
-        </section>
+      {tab === "talk" ? (
+        <main className="talk-wrap">
+          <TalkView
+            api={api}
+            status={status}
+            lines={lines}
+            connected={connected}
+            onChange={refreshStatus}
+          />
+        </main>
+      ) : (
+        <main className="grid">
+          <section className="card controls">
+            <h2>Session</h2>
+            <SessionControls api={api} onChange={refreshStatus} running={status?.session_running} />
+            <MicToggle api={api} muted={status?.muted ?? false} />
+          </section>
 
-        <section className="card">
-          <h2>State machine</h2>
-          <FsmView state={status?.state ?? "idle"} transitions={transitions} />
-        </section>
+          <section className="card">
+            <h2>State machine</h2>
+            <FsmView state={status?.state ?? "idle"} transitions={transitions} />
+          </section>
 
-        <section className="card wide">
-          <h2>Transcript</h2>
-          <Transcript lines={lines} />
-        </section>
+          <section className="card wide">
+            <h2>Transcript</h2>
+            <Transcript lines={lines} />
+          </section>
 
-        <section className="card wide">
-          <h2>Latency waterfall</h2>
-          <LatencyWaterfall spans={spans} />
-        </section>
+          <section className="card wide">
+            <h2>Latency waterfall</h2>
+            <LatencyWaterfall spans={spans} />
+          </section>
 
-        <section className="card wide">
-          <h2>Configuration</h2>
-          <ConfigEditor api={api} />
-        </section>
+          <section className="card wide">
+            <h2>Configuration</h2>
+            <ConfigEditor api={api} />
+          </section>
 
-        <section className="card wide">
-          <h2>Audit trail</h2>
-          <AuditView entries={audit} />
-        </section>
-      </main>
+          <section className="card wide">
+            <h2>Audit trail</h2>
+            <AuditView entries={audit} />
+          </section>
+        </main>
+      )}
     </div>
   );
 }

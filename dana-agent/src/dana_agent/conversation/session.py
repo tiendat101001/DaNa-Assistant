@@ -34,6 +34,7 @@ from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from dana_agent.conversation.pipeline import build_cascade_pipeline, build_s2s_pipeline
+from dana_agent.conversation.processors import WakeGateProcessor
 from dana_agent.observability import get_logger
 
 if TYPE_CHECKING:
@@ -132,6 +133,9 @@ class ConversationSession:
         self._mic_gate = mic_gate
         self._session_id = str(uuid.uuid4())
         self._runner: WorkerRunner | None = None
+        # The cascade wake gate, kept so the control plane can drive it
+        # (UI activate button, typed turns). None in s2s mode (no gate/brain).
+        self._wake_gate: WakeGateProcessor | None = None
 
     @property
     def session_id(self) -> str:
@@ -146,14 +150,16 @@ class ConversationSession:
                 session_id=self._session_id,
                 mic_gate=self._mic_gate,
             )
+            self._wake_gate = None
         else:
-            _, pipeline = build_cascade_pipeline(
+            _, pipeline, wake_gate = build_cascade_pipeline(
                 self._cfg,
                 self._stack,
                 session_id=self._session_id,
                 bypass_wake_gate=self._bypass_wake_gate,
                 mic_gate=self._mic_gate,
             )
+            self._wake_gate = wake_gate
 
         worker = PipelineWorker(
             pipeline,
@@ -184,3 +190,20 @@ class ConversationSession:
         if self._runner:
             await self._runner.cancel()
             self._runner = None
+            self._wake_gate = None
+
+    # --- external control (the Talk UI) -------------------------------------
+
+    async def activate(self) -> None:
+        """Trip the wake gate to ACTIVE — the UI equivalent of saying the wake
+        phrase, so the next spoken sentence goes straight to STT."""
+        if self._wake_gate is not None:
+            self._wake_gate.force_active(cause="ui_activate")
+
+    async def submit_text(self, text: str) -> None:
+        """Run a typed user turn through the live pipeline: the gate injects a
+        synthetic final transcript, the brain answers, and TTS speaks the reply
+        through the normal path (with all transcript/assistant WS events)."""
+        if self._wake_gate is None:
+            raise RuntimeError("typed turns need a cascade session (mode='s2s' has no gate/brain)")
+        await self._wake_gate.inject_transcript(text)

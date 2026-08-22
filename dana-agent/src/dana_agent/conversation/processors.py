@@ -246,6 +246,38 @@ class WakeGateProcessor(FrameProcessor):  # type: ignore[misc]
         except Exception as exc:
             log.error("wake_detect_unexpected", exc=str(exc))
 
+    # --- external control (Talk UI) ----------------------------------------
+
+    def force_active(self, cause: str = "manual") -> None:
+        """Trip the gate to ACTIVE from outside the pipeline — the UI's Talk
+        button. Same effect as hearing the wake phrase: subsequent mic audio
+        flows to STT without one. The ``wake_gate_active`` log event keeps the
+        state_transition WS stream truthful."""
+        if self._bypass or self._active:
+            return
+        self._active = True
+        self._buffering = False
+        self._audio_buffer = []
+        log.info("wake_gate_active", method="ui", cause=cause)
+
+    async def inject_transcript(self, text: str) -> None:
+        """Feed a typed user turn straight into the conversation downstream of
+        the gate. The normal path takes over from there: BrainProcessor runs
+        the turn (and logs ``transcript_final``), TTS speaks the reply, every
+        WS event fires — a text turn is indistinguishable from a spoken one.
+        Typing the end phrase ends the session, exactly like saying it."""
+        text = text.strip()
+        if not text:
+            return
+        if self._end_phrase in text.lower():
+            self._active = False
+            self._buffering = False
+            self._audio_buffer = []
+            log.info("wake_gate_idle", cause="end_phrase")
+            return  # consumed, like the spoken end phrase
+        self.force_active(cause="text_turn")
+        await self.push_frame(TranscriptionFrame(text=text, user_id="ui", timestamp=""))
+
 
 # ---------------------------------------------------------------------------
 # BrainProcessor

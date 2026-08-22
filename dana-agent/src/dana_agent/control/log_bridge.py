@@ -63,7 +63,9 @@ def make_log_sink(bus: EventBus) -> Callable[[MutableMapping[str, Any]], None]:
         elif event == "wake_gate_active":
             bus.publish(
                 EventType.STATE_TRANSITION,
-                {"from": "idle", "to": "active", "cause": "wake"},
+                # cause: "assemblyai_stt" (heard the phrase) | "ui" (Talk button
+                # / typed turn — see WakeGateProcessor.force_active).
+                {"from": "idle", "to": "active", "cause": event_dict.get("cause", "wake")},
             )
         elif event == "wake_gate_idle":
             bus.publish(

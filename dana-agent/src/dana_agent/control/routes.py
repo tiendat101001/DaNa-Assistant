@@ -117,6 +117,34 @@ async def session_stop(controller: Controller = Depends(get_controller)) -> dict
     return {"status": "stopped", **controller.status().to_json()}
 
 
+@api.post("/session/activate", dependencies=[_auth])
+async def session_activate(controller: Controller = Depends(get_controller)) -> dict[str, Any]:
+    """Trip the wake gate to ACTIVE — the Talk button. Like saying the wake
+    phrase: the next spoken sentence goes straight to STT."""
+    try:
+        await controller.activate()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "active", **controller.status().to_json()}
+
+
+@api.post("/session/turn", dependencies=[_auth])
+async def session_turn(
+    body: Mapping[str, Any] = Body(...),
+    controller: Controller = Depends(get_controller),
+) -> dict[str, Any]:
+    """Run a typed user turn through the live pipeline: the brain answers and
+    TTS speaks the reply, exactly like a spoken turn."""
+    text = str(body.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text is required")
+    try:
+        await controller.submit_text(text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "submitted", "text": text}
+
+
 @api.get("/status", dependencies=[_auth])
 def status(controller: Controller = Depends(get_controller)) -> dict[str, Any]:
     return controller.status().to_json()

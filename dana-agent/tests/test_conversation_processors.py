@@ -653,3 +653,59 @@ async def test_tts_processor_interruption_cancels_and_forwards() -> None:
     assert proc._active is False
     assert proc._tts_task is None
     assert interr in collected
+
+
+# --- external gate control (Talk UI) ------------------------------------------
+
+
+async def test_force_active_lets_audio_through_without_wake_word() -> None:
+    detector = MagicMock()
+    detector.detect = AsyncMock(return_value=False)  # never hears the phrase
+    proc = WakeGateProcessor(detector=detector, bypass=False)
+
+    pushed: list[Any] = []
+
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+        pushed.append(f)
+
+    proc.push_frame = capture
+
+    await proc.process_frame(VADUserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+    await proc.process_frame(audio_frame(), FrameDirection.DOWNSTREAM)
+    assert pushed == []  # IDLE: buffered, not forwarded
+
+    proc.force_active(cause="ui_activate")
+    await proc.process_frame(audio_frame(), FrameDirection.DOWNSTREAM)
+    assert len(pushed) == 1  # ACTIVE: audio flows without the wake word
+    assert detector.detect.await_count == 0  # buffered clip never sent
+
+
+async def test_inject_transcript_pushes_turn_and_activates() -> None:
+    proc = WakeGateProcessor(detector=None, bypass=False)
+    pushed: list[Any] = []
+
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+        pushed.append(f)
+
+    proc.push_frame = capture
+    await proc.inject_transcript("what's the weather")
+
+    assert len(pushed) == 1 and isinstance(pushed[0], TranscriptionFrame)
+    assert pushed[0].text == "what's the weather"
+    # The gate is ACTIVE now, so follow-up speech flows without a wake word.
+    await proc.process_frame(audio_frame(), FrameDirection.DOWNSTREAM)
+    assert len(pushed) == 2
+
+
+async def test_inject_transcript_end_phrase_still_deactivates() -> None:
+    proc = WakeGateProcessor(detector=None, bypass=False)
+    pushed: list[Any] = []
+
+    async def capture(f: Any, d: FrameDirection = FrameDirection.DOWNSTREAM) -> None:
+        pushed.append(f)
+
+    proc.push_frame = capture
+    await proc.inject_transcript("Bye DaNa")
+    # The injected end phrase deactivates the gate and is consumed.
+    await proc.process_frame(audio_frame(), FrameDirection.DOWNSTREAM)
+    assert pushed == []  # nothing forwarded: gate returned to IDLE

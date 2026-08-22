@@ -459,3 +459,136 @@ select {
   margin-top: 4px;
   color: var(--muted);
 }
+
+/* --- Talk view (voice-first conversation) -------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-left: 16px;
+  margin-right: auto;
+}
+.tab {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.tab.active {
+  color: var(--ink);
+  border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  font-weight: 600;
+}
+
+.talk-wrap {
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+}
+.talk {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .talk {
+    grid-template-columns: 1fr;
+  }
+}
+
+.talk-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 16px;
+}
+.talk-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 60vh;
+}
+.talk-main .transcript {
+  flex: 1;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.state-chip .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.state-chip.active {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.state-chip.active .dot {
+  background: var(--ok);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.talk-btn {
+  font-size: 18px;
+  font-weight: 700;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  cursor: pointer;
+}
+.talk-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.talk-btn.live {
+  background: var(--ok);
+}
+.talk-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.talk-input {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+}
+.talk-input input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.small {
+  font-size: 12px;
+}

@@ -14,7 +14,7 @@ an S2S provider is selected via config).
 
 Usage::
 
-    transport, pipeline = build_cascade_pipeline(cfg, stack)
+    transport, pipeline, wake_gate = build_cascade_pipeline(cfg, stack)
     worker = PipelineWorker(pipeline, params=PipelineParams(allow_interruptions=True))
 """
 
@@ -163,10 +163,12 @@ def build_cascade_pipeline(
     session_id: str | None = None,
     bypass_wake_gate: bool = False,
     mic_gate: MicGate | None = None,
-) -> tuple[LocalAudioTransport, Pipeline]:
+) -> tuple[LocalAudioTransport, Pipeline, WakeGateProcessor]:
     """Assemble and return the Pipecat cascade pipeline.
 
-    Returns the transport (so the caller can start/stop it) and the pipeline.
+    Returns ``(transport, pipeline, wake_gate)`` — the gate is returned so the
+    session can expose external control (UI activate / typed turns) through
+    ``force_active`` / ``inject_transcript``.
 
     ``bypass_wake_gate=True`` forwards every audio frame to STT immediately,
     skipping wake-word detection — useful for development without a physical
@@ -223,7 +225,7 @@ def build_cascade_pipeline(
         bypass_wake=bypass_wake_gate,
         session_id=session_id,
     )
-    return transport, pipeline
+    return transport, pipeline, wake_gate
 
 
 def build_s2s_pipeline(
