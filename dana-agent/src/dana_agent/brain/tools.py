@@ -180,7 +180,8 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "browser_scroll",
         "Scroll the current page: by pixels (dy, negative = up), to top/bottom, "
-        "or until a text snippet is in view.",
+        "or until a text snippet is in view. Prefer target= when the user names "
+        "a section (e.g. 'the comments', 'phần bình luận').",
         (
             ToolArg("dy", int, "Pixels to scroll down (negative = up).", required=False),
             ToolArg("to", str, "'top' or 'bottom'.", required=False),
@@ -189,13 +190,21 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "browser_media",
-        "Control the media (video/audio) on the current page: play, pause, "
-        "toggle, seek by delta seconds (e.g. +42 or -5), seek to an absolute "
-        "position in seconds, set playback rate 0.25-2.0, mute/unmute, or read "
-        "state (title, position, duration).",
+        "Control the media (video/audio) on the current page. seek = RELATIVE "
+        "move by delta seconds (+42 forward, -5 back, e.g. 'jump forward 40 "
+        "seconds' or 'go back a bit'); seek_to = ABSOLUTE position in seconds "
+        "(e.g. 'skip to 3:20' → position_s=200). Also: play, pause, toggle, "
+        "rate 0.25-2.0, mute/unmute, state (title/position/duration). There is "
+        "no next/previous track here — use os_media_key for that.",
         (
             ToolArg("action", str, "play|pause|toggle|seek|seek_to|rate|mute|unmute|state"),
-            ToolArg("delta_s", float, "Relative seek in seconds (seek).", required=False),
+            ToolArg(
+                "delta_s",
+                float,
+                "Relative seek in seconds; negative = back. 'jump forward 40 "
+                "seconds' → 40; 'tua lui 42 giây' / 'go back 42 seconds' → -42.",
+                required=False,
+            ),
             ToolArg(
                 "position_s", float, "Absolute seek position in seconds (seek_to).", required=False
             ),
@@ -259,7 +268,9 @@ OS_TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "os_media_key",
-        "Send a media key: play_pause, next, prev, stop, vol_up, vol_down, mute.",
+        "Send a media key: play_pause, next, prev, stop, vol_up, vol_down, mute. "
+        "Use next/prev for 'next/previous video or song' — it hits whatever owns "
+        "the system media session (browser tab or desktop app).",
         (ToolArg("key", str, "One of the media key names."),),
     ),
     ToolSpec(
