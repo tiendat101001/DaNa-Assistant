@@ -52,12 +52,16 @@ no separate install required.
 
 ```bash
 cd dana-agent
-uv sync --dev          # installs core + dev deps (brain, test suite)
-uv sync --extra cloud  # adds pipecat, PyAudio, AssemblyAI, Gemini, ElevenLabs
+uv sync --dev --extra all     # everything: cloud + brain + actions + control
 ```
 
-> The `--dev` sync alone is enough for the offline test suite and `--validate-only`.
-> Add `--extra cloud` before running a live session.
+> ⚠️ **`uv sync` REPLACES the extra set** — it installs exactly what you ask
+> for and *uninstalls* the rest. A bare `uv sync` leaves only the dev deps
+> (no pipecat/uvicorn/Gemini SDK) and the agent won't start with
+> `ModuleNotFoundError`. Always include your extras, or just use `--extra all`
+> as above. Individual extras (`cloud`, `brain`, `actions`, `control`, …)
+> are listed in [`pyproject.toml`](dana-agent/pyproject.toml) if you want a
+> leaner set.
 
 **If uv is not yet on PATH** — the venv already exists at `dana-agent/.venv/`.
 Invoke Python directly until uv is installed:

@@ -909,6 +909,29 @@ actions = [
     { name = "playwright" },
     { name = "pycaw" },
 ]
+all = [
+    { name = "anthropic" },
+    { name = "assemblyai" },
+    { name = "deepgram-sdk" },
+    { name = "elevenlabs" },
+    { name = "fastapi" },
+    { name = "google-genai" },
+    { name = "keyring" },
+    { name = "langchain" },
+    { name = "langchain-core" },
+    { name = "langchain-google-genai" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-sqlite" },
+    { name = "openai" },
+    { name = "pillow" },
+    { name = "pipecat-ai" },
+    { name = "playwright" },
+    { name = "pyaudio" },
+    { name = "pycaw" },
+    { name = "pystray" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 brain = [
     { name = "langchain" },
     { name = "langchain-core" },
@@ -968,6 +991,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'cloud'", specifier = ">=0.30,<1" },
     { name = "assemblyai", marker = "extra == 'cloud'", specifier = ">=1.0,<2" },
+    { name = "dana-agent", extras = ["cloud", "brain", "brain-openai", "brain-google", "actions", "control"], marker = "extra == 'all'" },
     { name = "deepgram-sdk", marker = "extra == 'cloud'", specifier = ">=3.0,<8" },
     { name = "elevenlabs", marker = "extra == 'cloud'", specifier = ">=1.0,<3" },
     { name = "fastapi", marker = "extra == 'control'", specifier = ">=0.111,<1" },
@@ -996,7 +1020,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.1" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'control'", specifier = ">=0.30,<1" },
 ]
-provides-extras = ["cloud", "local", "wake", "brain", "brain-openai", "brain-google", "brain-anthropic", "actions", "control"]
+provides-extras = ["cloud", "local", "wake", "brain", "brain-openai", "brain-google", "brain-anthropic", "all", "actions", "control"]
 
 [package.metadata.requires-dev]
 dev = [

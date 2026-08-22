@@ -64,6 +64,14 @@ def _make_tray() -> tuple[Tray, _FakeIcon, FakeController, _FakeLoop]:
 
 def test_import_guard_raises_clear_error() -> None:
     # pystray/pillow absent → start() surfaces an actionable ImportError.
+    # Only meaningful when the deps are actually absent — an env with the
+    # `control` extra installed gets the real tray, so skip there.
+    try:
+        import pystray  # noqa: F401
+
+        pytest.skip("pystray installed (control extra) — the guard path is inert here")
+    except ImportError:
+        pass
     loop = asyncio.new_event_loop()
     try:
         t = Tray(loop, FakeController(), "http://127.0.0.1:8760")

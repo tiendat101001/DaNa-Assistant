@@ -50,6 +50,10 @@ brain = [
 brain-openai = ["langchain-openai>=0.2,<2"]
 brain-google = ["langchain-google-genai>=2.0,<5"]
 brain-anthropic = ["langchain-anthropic>=0.2,<2"]
+# Everything for a live session + Talk UI + actions in one extra. NOTE: uv
+# sync REPLACES the extra set — always include every extra you need (or just
+# this one) or previously-installed extras get pruned.
+all = ["dana-agent[cloud,brain,brain-openai,brain-google,actions,control]"]
 # Phase 5 — action layer. pycaw backs os_volume (master mixer via COM).
 actions = [
     "playwright>=1.44,<2",
