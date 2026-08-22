@@ -247,9 +247,29 @@ _MEDIA_SCRIPTS: dict[str, str] = {
         " else { window.scrollTo({top: document.documentElement.scrollHeight}); }"
         " return window.scrollY; }"
     ),
+    # Bot-check (CAPTCHA/challenge) detector — a read-only scan, no arguments.
+    # Matches reCAPTCHA/hCaptcha iframes, Cloudflare interstitials, and the
+    # usual "unusual traffic" text walls (Google /sorry et al.).
+    "bot_check": (
+        "/* dana:bot_check */ () => {"
+        " const q = (s) => document.querySelector(s);"
+        " const t = document.body ? document.body.innerText.slice(0, 2000).toLowerCase() : '';"
+        " if (q('iframe[src*=\"recaptcha\"]') || q('iframe[src*=\"hcaptcha\"]'))"
+        " return {blocked: true, kind: 'captcha'};"
+        " if (q('#challenge-running') || q('#challenge-form') ||"
+        " t.includes('checking your browser') || t.includes('verify you are human'))"
+        " return {blocked: true, kind: 'cloudflare'};"
+        " if (t.includes('unusual traffic') || t.includes('not a robot'))"
+        " return {blocked: true, kind: 'challenge'};"
+        " return {blocked: false}; }"
+    ),
 }
 # The YouTube-style player key used as the last-resort play/pause fallback.
 _PLAY_PAUSE_KEY = "k"
+
+# URL fragments that identify a bot-check wall before any DOM scan (the DOM
+# scan catches the rest — recaptcha/hcaptcha iframes, Cloudflare, text walls).
+_BOT_URL_MARKERS: tuple[str, ...] = ("/sorry/",)
 
 
 def _fmt_seconds(s: float) -> str:
@@ -300,6 +320,9 @@ class BrowserActions(ActionProvider):
         # that video from earlier". Same trust level as the audit log.
         self._visits: list[dict[str, object]] = []
         self._max_visits = 100
+        # Active bot-check (CAPTCHA wall) landing, if any — the bot_check
+        # event fires on every change so the UI can show/clear its banner.
+        self._bot_check_url: str | None = None
 
     @property
     def capabilities(self) -> Capabilities:
@@ -498,7 +521,10 @@ class BrowserActions(ActionProvider):
 
     async def _goto(self, page: Any, url: str) -> ActionResult:
         """Allowlist-checked navigation (shared by navigate/search/history-goto).
-        Records the landed visit in the provider's visit log."""
+        Records the landed visit in the provider's visit log and surfaces bot
+        checks (CAPTCHA walls) as a ``bot_check`` event — the one thing the
+        agent cannot and must never solve itself; the human clicks through in
+        the dedicated visible browser."""
         if not self._host_allowed(url):
             return ActionResult(ok=False, error=f"refused: domain not allowlisted: {url}")
         await page.goto(url, wait_until="domcontentloaded")
@@ -508,8 +534,47 @@ class BrowserActions(ActionProvider):
         if not self._host_allowed(landed):
             host = (urlparse(landed).hostname or landed).lower()
             return ActionResult(ok=False, error=f"refused: redirected off-allowlist to {host}")
+        kind = await self._bot_check_kind(page)
+        if kind is not None:
+            self._set_bot_check(True, url=landed, kind=kind)
+            host = (urlparse(landed).hostname or landed).lower()
+            return ActionResult(
+                ok=True,
+                output=(
+                    f"a bot check ({kind}) is blocking {host}. Tell the user to click "
+                    "'I'm not a robot' in the DaNa browser window, then ask me to retry"
+                ),
+            )
+        self._set_bot_check(False, url=landed)
         await self._record_visit(page, landed)
         return ActionResult(ok=True, output=f"navigated to {landed}")
+
+    async def _bot_check_kind(self, page: Any) -> str | None:
+        """'captcha' | 'cloudflare' | 'challenge' | None. URL markers first
+        (cheap, catches Google /sorry), then the canned DOM scan."""
+        if any(marker in str(getattr(page, "url", "") or "") for marker in _BOT_URL_MARKERS):
+            return "captcha"
+        result = await page.evaluate(_MEDIA_SCRIPTS["bot_check"])
+        if isinstance(result, dict) and result.get("blocked"):
+            return str(result.get("kind", "challenge"))
+        return None
+
+    def _set_bot_check(
+        self, active: bool, *, url: str, kind: str = "", bypassed: bool = False
+    ) -> None:
+        """Emit the bot_check event on every CHANGE (the log bridge turns it
+        into a WS event so the dashboard shows a solve-it banner)."""
+        was_active = self._bot_check_url is not None
+        if not bypassed and active == was_active and url == self._bot_check_url:
+            return
+        self._bot_check_url = url if active else None
+        log.info("bot_check", active=active, url=url, kind=kind, bypassed=bypassed)
+
+    def bypass_bot_check(self) -> None:
+        """Manually clear the active bot check landing and emit a bypassed bot_check event."""
+        url = self._bot_check_url or ""
+        self._set_bot_check(False, url=url, kind="bypassed", bypassed=True)
+
 
     async def _record_visit(self, page: Any, url: str) -> None:
         try:
@@ -578,8 +643,29 @@ class BrowserActions(ActionProvider):
                 return refusal
             # Accessibility/DOM text is cheaper and more precise than a screenshot.
             # Truncated + treated as untrusted DATA (never instructions).
-            text = await page.inner_text("body")
-            return ActionResult(ok=True, output=str(text)[:_READ_TEXT_LIMIT])
+            text = str(await page.inner_text("body") or "")
+            current_url = str(getattr(page, "url", "") or "")
+            if (
+                (not text.strip() or len(text.strip()) < 100)
+                and "/pdf/" in current_url
+                and "arxiv.org" in current_url
+                and self._ctx is not None
+            ):
+                abs_url = current_url.replace("/pdf/", "/abs/").removesuffix(".pdf")
+                try:
+                    resp = await self._ctx.request.get(abs_url)
+                    if getattr(resp, "status", 0) == 200:
+                        body_bytes = await resp.body()
+                        import re  # noqa: PLC0415
+
+                        html_text = body_bytes.decode("utf-8", errors="ignore")
+                        clean_text = re.sub(r"<[^>]+>", " ", html_text)
+                        clean_text = re.sub(r"\s+", " ", clean_text).strip()
+                        if clean_text:
+                            text = f"[arXiv Paper Abstract ({abs_url})]\n" + clean_text
+                except Exception:  # noqa: BLE001 — best-effort fallback
+                    log.debug("arxiv_pdf_fallback_failed", url=current_url)
+            return ActionResult(ok=True, output=text[:_READ_TEXT_LIMIT])
 
         if tool == "browser_click":
             if (refusal := self._current_page_refusal(page)) is not None:

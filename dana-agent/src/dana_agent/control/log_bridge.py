@@ -60,6 +60,18 @@ def make_log_sink(bus: EventBus) -> Callable[[MutableMapping[str, Any]], None]:
                 },
             )
         # --- carry-over B: live pipeline turn events -------------------------
+        elif event == "bot_check":
+            # A CAPTCHA/challenge wall is blocking the browser. active=True →
+            # the UI shows a solve-it banner; active=False clears it.
+            bus.publish(
+                EventType.BOT_CHECK,
+                {
+                    "active": bool(event_dict.get("active")),
+                    "url": event_dict.get("url"),
+                    "kind": event_dict.get("kind", ""),
+                    "bypassed": bool(event_dict.get("bypassed", False)),
+                },
+            )
         elif event == "wake_gate_active":
             bus.publish(
                 EventType.STATE_TRANSITION,

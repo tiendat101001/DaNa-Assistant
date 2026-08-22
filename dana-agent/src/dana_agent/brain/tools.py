@@ -149,8 +149,8 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "browser_read_text",
         "Read the visible text of the current page (returns untrusted page data). "
         "Call this FIRST whenever the user asks about page content — summarize, "
-        "translate a paragraph/abstract, explain a formula or term — then answer "
-        "from what it returns.",
+        "translate a paragraph/abstract, explain a formula or term, or when referring to "
+        "'this paper', 'current paper', 'bài này', 'bài đang xét'.",
     ),
     ToolSpec(
         "browser_click",
@@ -241,8 +241,8 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "browser_search",
         "Search on an allowlisted engine (youtube, google, duckduckgo, wikipedia, "
         "arxiv) in one step. With open_first=True, click the first result too — "
-        "e.g. 'play lofi on YouTube' or 'find the attention paper on arxiv' is "
-        "one call.",
+        "e.g. 'play lofi on YouTube' or 'find paper on arxiv' "
+        "(opens the PDF by default for arXiv) is one call.",
         (
             ToolArg("query", str, "The search query."),
             ToolArg("engine", str, "youtube|google|duckduckgo|wikipedia|arxiv"),
@@ -252,7 +252,8 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "browser_get_state",
         "Read the current page: title, URL, tab count, and media state — use it "
-        "to answer 'what's playing' or verify a step.",
+        "to check what paper or page is open, answer 'what's open' / 'bài đang xét', "
+        "or verify a step.",
     ),
     ToolSpec(
         "browser_zoom",

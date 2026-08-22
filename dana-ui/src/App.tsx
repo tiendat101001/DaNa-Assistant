@@ -4,6 +4,7 @@ import { EventStream } from "./api/ws";
 import type {
   AssistantTurn,
   AuditEntry,
+  BotCheckData,
   ConfirmationRequest,
   Envelope,
   LatencySpan,

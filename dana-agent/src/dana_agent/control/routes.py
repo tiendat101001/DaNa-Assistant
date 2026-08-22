@@ -186,6 +186,20 @@ async def resolve_confirmation(
     return {"id": confirmation_id, "approved": approved}
 
 
+# --- bot check -----------------------------------------------------------
+
+
+@api.post("/session/bot-check/resolve", dependencies=[_auth])
+async def resolve_bot_check(
+    body: Mapping[str, Any] = Body(default={}),
+    controller: Controller = Depends(get_controller),
+) -> dict[str, Any]:
+    """Signal that a bot check / CAPTCHA challenge has been resolved or bypassed."""
+    bypassed = bool(body.get("bypassed", True))
+    await controller.resolve_bot_check(bypassed=bypassed)
+    return {"status": "resolved", "bypassed": bypassed}
+
+
 # --- audit ---------------------------------------------------------------
 
 

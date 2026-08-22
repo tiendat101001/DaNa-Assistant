@@ -70,6 +70,15 @@ export interface MicState {
   muted: boolean;
 }
 
+// A CAPTCHA/challenge wall is blocking the agent's browser. active=false
+// clears the banner. The human solves it by hand in the DaNa browser window —
+// the agent never tries to bypass it.
+export interface BotCheckData {
+  active: boolean;
+  url: string;
+  kind: string;
+}
+
 export interface Status {
   state: string;
   session_running: boolean;

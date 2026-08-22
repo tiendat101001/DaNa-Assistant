@@ -86,6 +86,10 @@ class FakeController(Controller):
         self.calls.append(f"resolve:{confirmation_id}:{approved}")
         return self._pending.pop(confirmation_id, None) is not None
 
+    async def resolve_bot_check(self, *, bypassed: bool = True) -> bool:
+        self.calls.append(f"resolve_bot_check:{bypassed}")
+        return True
+
     def pending_confirmations(self) -> list[ConfirmationInfo]:
         return list(self._pending.values())
 

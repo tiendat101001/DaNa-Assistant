@@ -222,3 +222,32 @@ async def test_type_and_screenshot_refuse_when_current_page_off_allowlist() -> N
     shot = await provider.execute(Action("browser_screenshot", {}))
     assert typed.ok is False and shot.ok is False
     assert page.fills == [] and page.screenshots == 0
+
+
+def test_bypass_bot_check_clears_active_bot_check() -> None:
+    provider = make_provider(["example.com"])
+    provider._bot_check_url = "https://google.com/sorry/index"
+    provider.bypass_bot_check()
+    assert provider._bot_check_url is None
+
+
+async def test_read_text_arxiv_pdf_fallback() -> None:
+    from tests.fixtures.browser import FakeAPIRequest, FakeContext, FakeResponse
+
+    provider = make_provider(["arxiv.org"])
+    ctx = FakeContext()
+    html_body = (
+        b"<html><head><title>FAR-DPO Paper</title></head>"
+        b"<body>Abstract content</body></html>"
+    )
+    ctx.request = FakeAPIRequest(FakeResponse(body=html_body))
+    provider._ctx = ctx
+    browser_with_fake_page(
+        provider, FakePage(body_text="", url="https://arxiv.org/pdf/2608.19808")
+    )
+    result = await provider.execute(Action("browser_read_text", {}))
+    assert result.ok is True
+    assert "arXiv Paper Abstract" in result.output
+    assert "Abstract content" in result.output
+
+

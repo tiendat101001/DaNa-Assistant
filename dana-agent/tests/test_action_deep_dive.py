@@ -637,7 +637,7 @@ def test_launch_downloads_not_allowlisted_refused(monkeypatch: pytest.MonkeyPatc
 def test_arxiv_search_url_and_selector() -> None:
     url = search_url("arxiv", "attention is all you need")
     assert url == "https://arxiv.org/search/?query=attention+is+all+you+need&searchtype=all"
-    assert ADAPTERS["arxiv"].first_result_selector == "li.arxiv-result p.list-title a"
+    assert ADAPTERS["arxiv"].first_result_selector == "li.arxiv-result a[href*='/pdf/']"
 
 
 async def test_search_arxiv_navigates_when_allowlisted() -> None:

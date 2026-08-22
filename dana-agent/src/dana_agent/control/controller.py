@@ -124,6 +124,10 @@ class Controller(ABC):
         """Approve/deny a pending confirmation. Returns False if unknown."""
 
     @abstractmethod
+    async def resolve_bot_check(self, *, bypassed: bool = True) -> bool:
+        """Signal that an active bot check / CAPTCHA has been resolved or bypassed."""
+
+    @abstractmethod
     def pending_confirmations(self) -> list[ConfirmationInfo]: ...
 
     @abstractmethod
@@ -308,6 +312,18 @@ class AgentController(Controller):
                         EventType.ASSISTANT_TURN, {"text": event.text, "interrupted": False}
                     )
         log.info("confirmation_resolved", id=confirmation_id, approved=approved)
+        return True
+
+    async def resolve_bot_check(self, *, bypassed: bool = True) -> bool:
+        actions = getattr(self._stack, "actions", None)
+        if actions is not None and hasattr(actions, "bypass_bot_check"):
+            actions.bypass_bot_check()
+        else:
+            self._bus.publish(
+                EventType.BOT_CHECK,
+                {"active": False, "url": "", "kind": "bypassed", "bypassed": bypassed},
+            )
+        log.info("bot_check_resolved", bypassed=bypassed)
         return True
 
     def apply_config(self, new_config: AppConfig) -> list[FieldChange]:

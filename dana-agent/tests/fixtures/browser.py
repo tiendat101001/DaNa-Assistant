@@ -117,6 +117,9 @@ class FakePage:
         self.key_presses: list[str] = []
         self.wheel_calls: list[tuple[int, int]] = []
         self.scroll_targets: list[dict[str, object]] = []
+        # Simulated bot-check (CAPTCHA wall) state for the canned bot_check
+        # script; None ⇒ page is clean ({blocked: False}).
+        self.bot_check: dict[str, Any] | None = None
         # Simulated <video>/<audio> element state; None ⇒ page has no media
         # element (the canned scripts return 'no-media').
         self.media: dict[str, Any] | None = {
@@ -188,6 +191,8 @@ class FakePage:
         enough to pin the provider↔page contract offline."""
         name = script.split("*/", 1)[0].replace("/*", "").strip().removeprefix("dana:")
         m = self.media
+        if name == "bot_check":
+            return self.bot_check if self.bot_check is not None else {"blocked": False}
         if name == "scroll_to":
             self.scroll_y = 0.0 if arg[0] == "top" else 8_000.0
             return self.scroll_y

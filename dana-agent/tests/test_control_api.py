@@ -258,3 +258,11 @@ async def test_session_turn_without_session_is_409(
 ) -> None:
     res = client.post("/api/v1/session/turn", json={"text": "hello"}, headers=AUTH)
     assert res.status_code == 409
+
+
+def test_resolve_bot_check_endpoint(client: TestClient, controller: FakeController) -> None:
+    res = client.post("/api/v1/session/bot-check/resolve", headers=AUTH, json={"bypassed": True})
+    assert res.status_code == 200
+    assert res.json() == {"status": "resolved", "bypassed": True}
+    assert "resolve_bot_check:True" in controller.calls
+

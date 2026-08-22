@@ -68,9 +68,9 @@ ADAPTERS: dict[str, SiteAdapter] = {
         name="arxiv",
         host_suffixes=("arxiv.org",),
         search_template="https://arxiv.org/search/?query={q}&searchtype=all",
-        # Search results page: one li per paper, title link inside the
-        # list-title paragraph → lands on the /abs page.
-        first_result_selector="li.arxiv-result p.list-title a",
+        # Search results page: one li per paper, PDF link inside the
+        # result item → opens the PDF directly by default.
+        first_result_selector="li.arxiv-result a[href*='/pdf/']",
         verified="2026-08-22 live probe ok",
     ),
 }

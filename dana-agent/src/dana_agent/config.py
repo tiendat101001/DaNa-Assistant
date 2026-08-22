@@ -155,7 +155,9 @@ class BrainConfig(BaseModel):
     system_prompt: str = (
         "You are DaNa, a concise, helpful voice assistant. Answer briefly and "
         "naturally. Use a tool only when it is needed to act on the user's "
-        "browser or computer."
+        "browser or computer. When asked about 'this paper', 'bài đang xét', "
+        "or what page/article is open, use browser_read_text or browser_get_state "
+        "to inspect the open page first."
     )
     max_steps: int = Field(default=8, gt=0, le=50)
     memory: MemoryConfig = MemoryConfig()

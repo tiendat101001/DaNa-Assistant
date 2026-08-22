@@ -47,6 +47,7 @@ class EventType(StrEnum):
     AUDIT_ENTRY = "audit_entry"
     CONFIG_CHANGED = "config_changed"
     MIC_STATE = "mic_state"
+    BOT_CHECK = "bot_check"
     ERROR = "error"
 
 
