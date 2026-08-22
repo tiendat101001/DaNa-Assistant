@@ -20,6 +20,7 @@ tools instead of none.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,7 +30,10 @@ from pydantic import BaseModel, Field, create_model
 
 from dana_agent.actions.gate import ActionGate, GateDecision
 from dana_agent.config import ActionsConfig
+from dana_agent.observability import get_logger
 from dana_agent.types import Action
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +94,17 @@ def build_gated_tool(spec: ToolSpec, gate: ActionGate) -> BaseTool:
             if not approved:
                 return "refused by user"
 
+        t0 = time.perf_counter()
         result = await gate.execute(action, reversibility)
+        # Same "latency" event the conversation observer emits — the log bridge
+        # turns it into a latency_span so the dashboard waterfall shows action
+        # cost per turn.
+        log.info(
+            "latency",
+            stage="action",
+            tool=spec.name,
+            ms=round((time.perf_counter() - t0) * 1000, 1),
+        )
         return result.output or result.error or ""
 
     if not spec.args:

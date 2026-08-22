@@ -113,6 +113,10 @@ class ActionsConfig(ProviderConfig):
     allowed_apps: list[str] = Field(default_factory=list)
     gate_policy: Literal["standard", "conservative", "wide"] = "standard"
     max_actions_per_turn: int = Field(default=10, gt=0)
+    # Hard-refuse purchase-committing clicks outright — stronger than the
+    # destructive-word confirmation, for accounts that must never be charged
+    # by voice. Restart-required on hot-apply.
+    forbid_purchases: bool = False
 
     # --- browser (Playwright) provider ---
     # Dedicated, disposable profile dir — NEVER the user's real Chrome profile.

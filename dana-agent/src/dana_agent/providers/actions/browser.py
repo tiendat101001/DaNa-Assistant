@@ -36,6 +36,17 @@ log = get_logger(__name__)
 _NAV_TIMEOUT_MS = 15_000
 # Truncate page text: bounds context growth AND the prompt-injection surface.
 _READ_TEXT_LIMIT = 8_000
+# Purchase-committing labels — a strict subset of the destructive words. When
+# ``forbid_purchases`` is set these are REFUSED outright, not confirmed.
+_PURCHASE_WORDS = (
+    "pay",
+    "buy",
+    "checkout",
+    "place order",
+    "thanh toán",  # pay / checkout
+    "đặt hàng",  # place order
+    "đặt mua",  # place order (alt)
+)
 # Click labels that commit an irreversible/consequential action → DESTRUCTIVE.
 # English + Vietnamese (vi labels must survive .lower(), which keeps diacritics).
 _DESTRUCTIVE_CLICK_WORDS = (
@@ -316,6 +327,8 @@ class BrowserActions(ActionProvider):
             return Reversibility.REVERSIBLE  # fills a field; nothing committed yet
         if tool == "browser_click":
             label = f"{args.get('name', '')} {args.get('text', '')}".lower()
+            if self._cfg.forbid_purchases and any(word in label for word in _PURCHASE_WORDS):
+                return Reversibility.OUT_OF_SCOPE  # purchases forbidden → refuse
             if any(word in label for word in _DESTRUCTIVE_CLICK_WORDS):
                 return Reversibility.DESTRUCTIVE  # submit/pay/delete/send → confirm
             return Reversibility.REVERSIBLE  # generic UI/navigation click

@@ -468,3 +468,54 @@ async def test_os_media_state_no_session() -> None:
     result = await provider.execute(Action("os_media_state", {}))
     assert result.ok is True
     assert "no active media session" in result.output
+
+
+# --- M5: forbid_purchases -------------------------------------------------------
+
+
+def test_forbid_purchases_refuses_purchase_clicks_outright() -> None:
+    provider = BrowserActions(
+        ActionsConfig(provider="browser", allowed_domains=["shop.example"], forbid_purchases=True)
+    )
+    pay = provider.classify(Action("browser_click", {"text": "Buy now"}))
+    vi = provider.classify(Action("browser_click", {"text": "Thanh toán"}))
+    submit = provider.classify(Action("browser_click", {"text": "Submit"}))
+    assert pay is Reversibility.OUT_OF_SCOPE  # refused, not confirmed
+    assert vi is Reversibility.OUT_OF_SCOPE
+    assert submit is Reversibility.DESTRUCTIVE  # non-purchase destructive still confirms
+
+
+def test_purchases_confirm_when_not_forbidden() -> None:
+    provider = make_provider(["shop.example"])
+    assert provider.classify(Action("browser_click", {"text": "Buy now"})) is (
+        Reversibility.DESTRUCTIVE
+    )
+
+
+# --- M5: human-unit confirmation previews ---------------------------------------
+
+
+def test_human_preview_phrases_in_human_units() -> None:
+    from dana_agent.actions.audit import human_preview
+
+    assert human_preview("browser_media", {"action": "seek", "delta_s": 42}) == "seek 0:42"
+    assert human_preview("browser_media", {"action": "seek", "delta_s": -5}) == "seek -0:05"
+    assert (
+        human_preview("browser_media", {"action": "seek_to", "position_s": 200}) == "seek to 3:20"
+    )
+    assert human_preview("browser_media", {"action": "rate", "rate": 1.5}) == "set speed 1.5x"
+    assert (
+        human_preview("browser_search", {"query": "lofi", "engine": "youtube", "open_first": True})
+        == "search youtube for 'lofi' and open the first result"
+    )
+    assert (
+        human_preview("os_volume", {"action": "set", "percent": 30}) == "set system volume to 30%"
+    )
+
+
+def test_human_preview_redacts_and_falls_back() -> None:
+    from dana_agent.actions.audit import human_preview
+
+    preview = human_preview("browser_type", {"into": "Password", "text": "hunter2"})
+    assert "hunter2" not in preview  # never speak a secret back
+    assert "browser_type" in preview

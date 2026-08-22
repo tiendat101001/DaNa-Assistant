@@ -328,12 +328,15 @@ class BrainProcessor(FrameProcessor):  # type: ignore[misc]
                     # Neutral event tap (carry-over B): the log-bridge maps this to
                     # a `confirmation_request` WS event so the dashboard sees the
                     # pending destructive action. Arguments are redacted before
-                    # logging so secrets never reach the durable trail or WS stream.
-                    from dana_agent.actions.audit import redact_arguments  # noqa: PLC0415
+                    # logging so secrets never reach the durable trail or WS stream;
+                    # the preview is phrased in human units (voice reads it aloud).
+                    from dana_agent.actions.audit import (  # noqa: PLC0415
+                        human_preview,
+                        redact_arguments,
+                    )
 
                     safe_args = redact_arguments(dict(event.arguments))
-                    arg_pairs = ", ".join(f"{k}={v!r}" for k, v in safe_args.items())
-                    preview = f"{event.tool}({arg_pairs})"
+                    preview = human_preview(event.tool, dict(event.arguments))
                     log.info(
                         "confirmation_required",
                         tool=event.tool,

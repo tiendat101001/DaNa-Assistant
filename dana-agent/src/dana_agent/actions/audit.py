@@ -85,6 +85,45 @@ def redact_arguments(arguments: dict[str, object]) -> dict[str, object]:
     return redacted
 
 
+def _fmt_secs(raw: object) -> str:
+    try:
+        s = int(float(raw))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "?"
+    m, sec = divmod(abs(s), 60)
+    sign = "-" if s < 0 else ""
+    return f"{sign}{m}:{sec:02d}"
+
+
+def human_preview(tool: str, arguments: dict[str, object]) -> str:
+    """A short, human-unit preview of a gated action for voice/UI confirmation.
+
+    Redacted first (same rules as the durable trail), then phrased in the units
+    a person would say: "seek +0:42", "set speed 1.5x" — not
+    ``browser_media(action='seek', delta_s=42)``. Unknown tools fall back to
+    redacted ``tool(k=v, …)`` pairs, which is still safe to speak.
+    """
+    safe = redact_arguments(dict(arguments))
+    act = str(safe.get("action", ""))
+    if tool == "browser_media":
+        if act == "seek":
+            return f"seek {_fmt_secs(safe.get('delta_s'))}"
+        if act == "seek_to":
+            return f"seek to {_fmt_secs(safe.get('position_s'))}"
+        if act == "rate":
+            return f"set speed {safe.get('rate', '?')}x"
+        return f"{tool}: {act}"
+    if tool == "browser_search":
+        suffix = " and open the first result" if safe.get("open_first") else ""
+        return f"search {safe.get('engine', '?')} for '{safe.get('query', '')}'{suffix}"
+    if tool == "os_volume" and act == "set":
+        return f"set system volume to {safe.get('percent', '?')}%"
+    if tool == "os_window":
+        return f"window {act}" + (f" '{safe.get('title')}'" if safe.get("title") else "")
+    pairs = ", ".join(f"{k}={v!r}" for k, v in safe.items())
+    return f"{tool}({pairs})" if pairs else tool
+
+
 @dataclass(frozen=True, slots=True)
 class AuditEntry:
     at: float
