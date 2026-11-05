@@ -487,7 +487,7 @@ async def test_early_commit_not_before_silence_threshold() -> None:
 
 
 # --- reviewer probes (regressions) ---
-from pipecat.frames.frames import CancelFrame
+from pipecat.frames.frames import CancelFrame  # noqa: E402
 
 
 def _pl(n: int = 3200) -> InputAudioRawFrame:

@@ -153,4 +153,5 @@ def test_probe_drops_stored_key_on_base_url_change(
         c.post("/api/v1/llm/probe", headers=H, json={"base_url": "https://evil.invalid/v1"})
         assert seen["cfg"].api_key is None
         c.post("/api/v1/llm/probe", headers=H, json={})
+        assert seen["cfg"].api_key is not None
         assert seen["cfg"].api_key.get_secret_value() == "stored"
