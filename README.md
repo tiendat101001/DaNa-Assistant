@@ -191,6 +191,37 @@ uv run python -m dana_agent --validate-only
 
 ---
 
+## Self-hosted models & realtime
+
+Run speech on-device (LiteRT) and pick a fast LLM, all from the UI. Latency
+target: first audio within **600 ms** of you finishing a sentence.
+
+1. Install everything: `cd dana-agent && uv sync --dev --extra all`, build the UI
+   (`cd dana-ui && npm run build`) and start the agent as usual.
+2. Open the UI, paste the control token, and go to the **Models** tab.
+3. **Pull & load**: browse `litert-community` (filter ASR / TTS / LLM), open a
+   model to see the recommended files, then *Pull & Load* (e.g.
+   `moonshine-tiny` for ASR, `kitten-tts-nano-0.8` for English TTS). Public
+   repos need no token; set `HF_TOKEN` only for gated ones.
+4. **Assign**: in *Local models* click *Use as ASR* / *Use as TTS*. The change
+   is written to config and hot-applied where possible.
+5. **LLM hosting**: pick a preset (Together, SGLang/vLLM, Ollama, ...), *Apply*,
+   then *Measure latency* to see time-to-first-token. Together needs
+   `TG_API_KEY`; see `dana-agent/.env.example` for the variables.
+6. **Latency budget**: the top card splits the 600 ms goal into VAD stop, STT,
+   LLM first token and TTS first byte; tune `DANA_CONVERSATION__LATENCY__*`.
+7. **Computer use**: with `DANA_ACTIONS__PROVIDER=browser` and
+   `ALLOWED_DOMAINS` set, the agent uses `browser_snapshot` (numbered element
+   refs) then `browser_act(ref, action)`. Destructive clicks (delete, pay, ...)
+   ask for confirmation; links leaving the allowlist are refused.
+8. **MCP**: add servers under `DANA_ACTIONS__MCP_SERVERS` (stdio or HTTP). Their
+   tools appear to the agent through the same gate: read-only tools run, the
+   rest require confirmation.
+
+Vietnamese TTS uses Piper (`TTS__PROVIDER=piper`); LiteRT TTS is English only.
+
+---
+
 ## Provider quick-reference
 
 | Stage | Default | Alternatives |

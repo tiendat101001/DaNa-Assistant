@@ -85,7 +85,7 @@ async def bench_stt(label: str, model_file: str, name: str, wav: str, models_dir
     return {"label": label, "ms": times, "load_ms": load_ms, "audio_s": audio_s, "text": text}
 
 
-async def bench_llm(runs: int):
+async def bench_llm(runs: int, model: str | None = None):
     from dana_agent.actions.gate import ActionGate  # noqa: PLC0415
     from dana_agent.brain import Brain, build_chat_model  # noqa: PLC0415
     from dana_agent.brain.events import TokenDelta  # noqa: PLC0415
@@ -103,6 +103,7 @@ async def bench_llm(runs: int):
                 "llm": {
                     "provider": "together",
                     "max_tokens": 80,
+                    **({"model": model} if model else {}),
                     "extra": {"extra_body": {"reasoning": {"enabled": False}}},
                 }
             },
@@ -190,6 +191,9 @@ async def main() -> None:
     ap.add_argument(
         "--kitten", default=_env("DANA_TEST_KITTEN", f"{_ROOT}/hf_models/kitten-tts-nano-0.8")
     )
+    ap.add_argument(
+        "--models", default="", help="comma list of LLM model ids to sweep (override llm.model)"
+    )
     ap.add_argument("--vad-stop-ms", type=float, default=200)
     ap.add_argument("--budget-ms", type=float, default=600)
     a = ap.parse_args()
@@ -217,19 +221,28 @@ async def main() -> None:
             except Exception as exc:  # noqa: BLE001
                 rows.append((label, "FAILED", f"{type(exc).__name__}: {str(exc)[:80]}"))
     if "llm" not in skip:
-        try:
-            r = await bench_llm(a.runs)
-            rows.append(
-                (
-                    "LLM TTFT via Brain (tools bound)",
-                    _fmt(r["brain_ms"]),
-                    f"{r['model']}; {r['tools']} tools; max_tokens 80",
+        models: list[str | None] = [m.strip() for m in a.models.split(",") if m.strip()] or [None]
+        for i, mdl in enumerate(models):
+            try:
+                r = await bench_llm(a.runs, mdl)
+                rows.append(
+                    (
+                        "LLM TTFT via Brain (tools bound)",
+                        _fmt(r["brain_ms"]),  # type: ignore[arg-type]
+                        f"{r['model']}; {r['tools']} tools; max_tokens 80",
+                    )
                 )
-            )  # type: ignore[arg-type]
-            rows.append(("LLM TTFT plain probe_llm", _fmt(r["probe_ms"]), "no tools"))  # type: ignore[arg-type]
-            best["llm"] = _med(r["brain_ms"])  # type: ignore[arg-type]
-        except Exception as exc:  # noqa: BLE001
-            rows.append(("LLM TTFT via Brain", "FAILED", f"{type(exc).__name__}: {str(exc)[:80]}"))
+                if i == 0:  # plain probe + projection use the first model
+                    rows.append(("LLM TTFT plain probe_llm", _fmt(r["probe_ms"]), "no tools"))  # type: ignore[arg-type]
+                    best["llm"] = _med(r["brain_ms"])  # type: ignore[arg-type]
+            except Exception as exc:  # noqa: BLE001
+                rows.append(
+                    (
+                        f"LLM TTFT via Brain ({mdl})",
+                        "FAILED",
+                        f"{type(exc).__name__}: {str(exc)[:80]}",
+                    )
+                )
     if "tts" not in skip:
         try:
             r = await bench_tts(a.kitten, a.runs)
@@ -274,6 +287,11 @@ async def main() -> None:
                 stages = {"VAD stop": a.vad_stop_ms, "STT": v, "LLM TTFT": llm, "TTS": tts}
                 top = max(stages, key=lambda x: stages[x])
                 print(f"- Dominant stage with {k}: **{top}** ({stages[top]:.0f} ms)")
+    print(
+        f"- Projected perceived first audio with ack = {a.vad_stop_ms:.0f} ms VAD stop "
+        "+ ~20 ms (1 frame) = "
+        f"{a.vad_stop_ms + 20:.0f} ms (real reply still lands at voice_to_first_audio above)"
+    )
     for n in notes:
         print(f"- {n}")
 
