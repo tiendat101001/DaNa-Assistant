@@ -279,6 +279,22 @@ model choice (§5.3 #8).
 | 7 | Hardware: the container has 4 vCPU; a desktop CPU with 8+ performance cores | −20…−40 % compute | — | set `num_threads` = physical cores |
 | 8 | **Connection keep-warm** during sessions (shipped as `keepalive_s`, opt-in) | up to −750 ms on post-pause turns where the provider/proxy closes idle connections | done | no gain measured on Together after a 90 s idle; kept as a safeguard |
 
+### 5.3a Where the physical floor is (measured from this container)
+| Probe | Result |
+|---|---|
+| `GET {TG_BASE_URL}/models` on a fresh connection | TLS 80–300 ms; first byte 230–640 ms |
+| same, on a **re-used** keep-alive connection | first byte **160–260 ms** (network + proxy only, no model work) |
+| LLM TTFT (warm, best serverless model) | ≥ 370 ms, i.e. ≈ 200 ms network + ≈ 170 ms server |
+| CPU | 4 vCPU Intel Xeon with AVX-512/VNNI but **no AMX**, so SGLang's CPU backend (AMX-only) is not an option here, and there is no GPU |
+
+**Implication:** with a cloud LLM from here, LLM + TTS alone is ≈ 500 ms, so the
+real reply can only beat 600 ms if speech recognition + turn commit fits in
+< ~100 ms. That is why the last sprint targets a single-pass CTC recogniser
+(no token-by-token decoding) and an early turn commit off the speculative
+transcript (§5.5). On a machine with a local NVIDIA GPU, an SGLang
+Qwen2.5-1.5B removes most of the LLM leg (TTFT tens of ms, *estimate*), which
+makes the budget comfortable.
+
 ### 5.4 Final sprint (shipped, opt-in, tested)
 | Feature | Mechanism | Measured |
 |---|---|---|
