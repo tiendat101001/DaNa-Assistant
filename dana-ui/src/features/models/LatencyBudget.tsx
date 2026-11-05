@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { LatencySpan } from "../../api/types";
 
 export const BUDGET_MS = 600;
-const KEY = "dana.latency.estimates";
+const KEY = "dana.latency.estimates.v2";
 
 interface Stage {
   id: string;
@@ -16,7 +16,7 @@ const STAGES: Stage[] = [
   { id: "llm", label: "LLM first token", color: "var(--c3)", span: "llm_ttft" },
   { id: "tts", label: "TTS first byte", color: "var(--c4)", span: "tts_ttfb" },
 ];
-const DEFAULTS: Record<string, number> = { vad: 200, stt: 150, llm: 150, tts: 100 };
+const DEFAULTS: Record<string, number> = { vad: 200, stt: 423, llm: 426, tts: 138 };
 
 export function useEstimates(): [Record<string, number>, (id: string, v: number) => void] {
   const [est, setEst] = useState<Record<string, number>>(() => {
@@ -68,6 +68,10 @@ export function LatencyBudget({ spans = [] }: { spans?: LatencySpan[] }) {
         ))}
         <div className="budget-line" style={{ left: `${(BUDGET_MS / scale) * 100}%` }} />
       </div>
+      <p className="muted small">
+        defaults = measured on a 4-vCPU test box (2026-11-05); edit or speak a turn to see your
+        machine&apos;s numbers
+      </p>
       <p className={over ? "error" : "ok-text"}>
         Estimated total: <strong>{sum} ms</strong> {over ? `(${sum - BUDGET_MS} ms over budget)` : "— within budget"}
       </p>

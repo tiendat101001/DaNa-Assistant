@@ -138,7 +138,7 @@ then apply the "SGLang Qwen2.5-1.5B" preset and use **Check server**.
 ### 4.1 Backend gate (Team Lead A, final re-run)
 | Gate | Result |
 |---|---|
-| Offline suite `pytest -m 'not live'` | **566 passed, 4 skipped, 0 failed** (final re-run after the latency sprint) (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
+| Offline suite `pytest -m 'not live'` | **581 passed, 4 skipped, 0 failed** (final re-run after the latency sprint and the catalog-classification fix) (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
 | `ruff check src tests scripts` | clean |
 | `ruff format --check` | clean (157 files) |
 | `mypy` (strict, whole project) | clean except 5 accepted `ctypes.windll` errors in `os_win.py` that only Linux mypy reports (already present before this work) |
@@ -171,7 +171,11 @@ Bugs found by this gate and fixed by their owners:
 2. **LLM probe ignored env credentials** when the UI switched provider. The probe now
    resolves config exactly like startup, and it never reuses one vendor's key for
    another provider (C5, with a test).
-3. **Cold hub fetch (~15 s) showed an empty grid.** A loading status line and
+3. **Catalog misclassification:** MoGe-2 (`depth-estimation`) appeared under TTS
+   because of substring keyword matching. `pipeline_tag` now decides, and the
+   fallback matches whole tokens only. Re-verified over all 443 live repos: no
+   vision repo is in ASR/TTS (C1, +15 tests built from real entries).
+4. **Cold hub fetch (~15 s) showed an empty grid.** A loading status line and
    360 px layout guards were added (UX).
 
 
