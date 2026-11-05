@@ -148,7 +148,32 @@ then apply the "SGLang Qwen2.5-1.5B" preset and use **Check server**.
 New offline tests by area: registry ≈ 62, LiteRT runtime/ASR ≈ 18, TTS ≈ 22,
 latency pipeline 25, LLM + MCP 41, generic computer use 36, multi-stage load 2.
 
-<!-- LEAD_B_FLOWS -->
+### 4.2 Product gate (Team Lead B, real backend + real huggingface.co, Playwright)
+Run at 1280 px desktop and a 360 px phone viewport: **all flows pass on both**, with
+no JS errors and no horizontal scroll. Screenshots are in `screenshots/`
+(`desk-*` / `phone-*`).
+
+| Flow | Result |
+|---|---|
+| Hub catalog loads (live HF; 100 cards per page) | PASS |
+| TTS filter shows Kokoro-82M and kitten-tts-nano-0.8 (14 TTS repos) | PASS |
+| Detail drawer: files listed, recommended pre-checked (README + `moonshine_tiny_5s_i8.tflite`) | PASS |
+| **Pull & Load** `moonshine-tiny` in one click: progress bar → loaded (49.6 MB, cpu, 4 threads) | PASS |
+| Local models table → **Use as ASR** (shows the config diff, flagged restart-required) | PASS |
+| LLM Hosting: 9 presets render; **Measure latency** with the Together preset | PASS (see §5.2 note) |
+| **Generic computer use**, real `BrowserActions` through `ActionGate` on a local page: snapshot → refs e1..e5; fill by ref → ALLOW (reversible) and executed; click "Search" → ALLOW; click **"Delete account" → CONFIRM (destructive), not executed**; click external link → **REFUSE (out of scope)** | PASS |
+| **MCP bridge**, real stdio FastMCP server: tools namespaced `mcp_<server>_<tool>`; read-only → ALLOW and output fenced as untrusted; destructive / unannotated → CONFIRM; unknown → REFUSE | PASS after a fix |
+
+Bugs found by this gate and fixed by their owners:
+1. **MCP 2.x annotations are snake_case** (`read_only_hint`). Read-only tools were
+   being classified destructive. That failed safe, but it was wrong. Both
+   spellings are now read (C5, with a test).
+2. **LLM probe ignored env credentials** when the UI switched provider. The probe now
+   resolves config exactly like startup, and it never reuses one vendor's key for
+   another provider (C5, with a test).
+3. **Cold hub fetch (~15 s) showed an empty grid.** A loading status line and
+   360 px layout guards were added (UX).
+
 
 Owner-verified during integration (live, this session):
 - **Registry, live HF:** the catalog listed 443 repos. `POST /pull {load:true}` for

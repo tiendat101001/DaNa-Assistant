@@ -34,6 +34,7 @@ export function LlmHosting({ api }: { api: ModelsApi }) {
   const [changes, setChanges] = useState<FieldChange[] | null>(null);
   const [health, setHealth] = useState<HealthResult | null>(null);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [cold, setCold] = useState<ProbeResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
@@ -50,24 +51,29 @@ export function LlmHosting({ api }: { api: ModelsApi }) {
     setSel(p.id);
     setChanges(null);
     setProbe(null);
+    setCold(null);
     setHealth(null);
     if (p.base_url) setBaseUrl(p.base_url);
     if (p.model) setModel(p.model);
   };
 
-  // Patch to apply: the preset's own patch, with SGLang's editable fields merged in.
+  // LLM object of the selected preset (patch.conversation.llm), with the
+  // user's edited base_url/model laid on top. Used by both Apply and Probe.
+  const buildLlm = (): Record<string, unknown> => {
+    if (!preset) return {};
+    const conv = ((preset.patch ?? {}) as { conversation?: { llm?: Record<string, unknown> } })
+      .conversation;
+    const llm = { ...(conv?.llm ?? {}) };
+    if (isSglang || preset.base_url) llm.base_url = baseUrl || preset.base_url;
+    if (model) llm.model = model;
+    return llm;
+  };
   const buildPatch = (): Record<string, unknown> => {
     if (!preset) return {};
     const patch = structuredClone(preset.patch ?? {}) as Record<string, unknown>;
-    if (isSglang) {
-      // Presets are partial AppConfig overlays: {conversation: {llm: {...}}}.
-      const conversation = { ...((patch.conversation as Record<string, unknown>) ?? {}) };
-      const llm = { ...((conversation.llm as Record<string, unknown>) ?? {}) };
-      llm.base_url = baseUrl;
-      if (model) llm.model = model;
-      conversation.llm = llm;
-      patch.conversation = conversation;
-    }
+    const conv = { ...((patch.conversation as Record<string, unknown>) ?? {}) };
+    conv.llm = buildLlm();
+    patch.conversation = conv;
     return patch;
   };
 
@@ -94,10 +100,11 @@ export function LlmHosting({ api }: { api: ModelsApi }) {
     });
   const measure = () =>
     wrap("probe", async () => {
-      const body: Record<string, unknown> = preset
-        ? { provider: preset.provider, model: model || preset.model }
-        : {};
-      if (preset && (isSglang || preset.base_url)) body.base_url = baseUrl || preset.base_url;
+      setProbe(null);
+      setCold(null);
+      const body = buildLlm();
+      const first = await api.probe(body);
+      setCold(first);
       setProbe(await api.probe(body));
     });
 
@@ -161,7 +168,7 @@ export function LlmHosting({ api }: { api: ModelsApi }) {
               </button>
             )}
             <button className="secondary" disabled={busy !== null} onClick={() => void measure()}>
-              {busy === "probe" ? "Measuring…" : "Measure latency"}
+              {busy === "probe" ? (cold ? "Measuring warm…" : "Measuring cold…") : "Measure latency"}
             </button>
           </div>
           {health && (
@@ -188,11 +195,19 @@ export function LlmHosting({ api }: { api: ModelsApi }) {
                   <strong className={tone(probe.ttft_ms, TTFT_BUDGET_MS)}>
                     {Math.round(probe.ttft_ms ?? 0)} ms
                   </strong>{" "}
-                  (budget {TTFT_BUDGET_MS}) · Total:{" "}
+                  (warm, budget {TTFT_BUDGET_MS}) · Total:{" "}
                   <strong className={tone(probe.total_ms, TOTAL_BUDGET_MS)}>
                     {Math.round(probe.total_ms ?? 0)} ms
                   </strong>
                   {probe.text && <div className="muted">“{probe.text}”</div>}
+                  {cold && (
+                    <div className="muted">
+                      cold:{" "}
+                      {cold.ok
+                        ? `${Math.round(cold.ttft_ms ?? 0)} ms first token · ${Math.round(cold.total_ms ?? 0)} ms total`
+                        : `failed: ${cold.error ?? "unknown error"}`}
+                    </div>
+                  )}
                 </>
               ) : (
                 `Probe failed: ${probe.error ?? "unknown error"}`
