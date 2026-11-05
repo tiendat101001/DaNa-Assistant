@@ -46,6 +46,7 @@ class TurnClock:
         self._stt: float | None = None
         self._tok: float | None = None
         self._audio: float | None = None
+        self._ack: float | None = None
 
     @property
     def active(self) -> bool:
@@ -53,7 +54,7 @@ class TurnClock:
 
     def reset(self) -> None:
         self.turn_id = ""
-        self._eos = self._stt = self._tok = self._audio = None
+        self._eos = self._stt = self._tok = self._audio = self._ack = None
 
     def mark_end_of_speech(self) -> str:
         """Start a new turn (VAD stop or typed-turn injection)."""
@@ -61,6 +62,15 @@ class TurnClock:
         self.turn_id = uuid.uuid4().hex[:8]
         self._eos = self._clock() - self._vad_delay_s
         return self.turn_id
+
+    def mark_ack_first_audio(self) -> None:
+        """First audio of the instant acknowledgement. Reported on its own stage
+        (``ack_first_audio``); it never affects ``voice_to_first_audio``."""
+        if self._eos is None or self._ack is not None:
+            return
+        now = self._clock()
+        self._ack = now
+        self._emit("ack_first_audio", now - self._eos)
 
     def mark_stt_final(self) -> None:
         if self._stt is not None:

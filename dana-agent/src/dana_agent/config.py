@@ -128,6 +128,11 @@ class LatencyConfig(BaseModel):
     # Pre-warm providers (load local models, open HTTP connections, one tiny
     # LLM call) at startup so the first real turn doesn't pay cold-start cost.
     warmup_on_start: bool = True
+    # Instant acknowledgement (opt-in): at end of speech, play a cached short
+    # phrase ("Mm-hm.") from the active TTS so the user hears the bot right
+    # away while STT/LLM run. Synthesized once per language at startup.
+    ack_enabled: bool = False
+    ack_phrases: dict[str, str] = Field(default_factory=lambda: {"en": "Mm-hm.", "vi": "Dạ."})
 
 
 # --- grouped configs -----------------------------------------------------

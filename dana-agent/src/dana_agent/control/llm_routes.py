@@ -10,7 +10,7 @@ import httpx
 from fastapi import APIRouter, Body, Depends, Query, Request
 
 from dana_agent.brain.probe import probe_llm
-from dana_agent.config import LLMConfig
+from dana_agent.config import AppConfig, LLMConfig
 from dana_agent.control.routes import require_auth
 
 llm_api = APIRouter(prefix="/api/v1/llm", dependencies=[Depends(require_auth)])
@@ -166,11 +166,20 @@ async def probe(
 ) -> dict[str, Any]:
     current: LLMConfig = request.app.state.controller.config().conversation.llm
     try:
-        merged = {**current.model_dump(), **(body or {})}
-        # model_dump() masks nothing for SecretStr objects; keep the real key.
-        if "api_key" not in (body or {}):
-            merged["api_key"] = current.api_key
-        cfg = LLMConfig.model_validate(merged)
+        overlay = body or {}
+        merged = {**current.model_dump(), **overlay}
+        # model_dump() masks SecretStr; restore the real key, but only when the
+        # provider is unchanged (never hand one vendor's key to another).
+        same_provider = overlay.get("provider", current.provider) == current.provider
+        if "api_key" not in overlay:
+            merged["api_key"] = current.api_key if same_provider else None
+        if not same_provider:
+            for k in ("base_url", "model"):
+                if k not in overlay:
+                    merged.pop(k, None)
+        # Run through AppConfig so the env fallbacks (GEMINI_/OPENAI_/TG_* ...)
+        # apply exactly as they do at startup.
+        cfg = AppConfig.model_validate({"conversation": {"llm": merged}}).conversation.llm
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "ttft_ms": None, "total_ms": None, "text": "", "error": str(exc)}
     return await probe_llm(cfg)

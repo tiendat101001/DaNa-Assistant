@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from dana_agent.config import AppConfig
+from dana_agent.control import llm_routes
 from dana_agent.control.llm_routes import llm_api
 from tests.support import clean_config
 
@@ -103,3 +104,25 @@ def test_health_down(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> Non
     assert r["ok"] is False
     assert r["models"] == []
     assert r["error"]
+
+
+def test_probe_resolves_env_key_fallback(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TG_API_KEY", "tg-secret")
+    monkeypatch.setenv("TG_BASE_URL", "https://example.invalid/v1")
+    seen: dict[str, Any] = {}
+
+    async def fake_probe(cfg: Any) -> dict[str, Any]:
+        seen["cfg"] = cfg
+        return {"ok": True, "ttft_ms": 1.0, "total_ms": 2.0, "text": "x", "error": None}
+
+    monkeypatch.setattr(llm_routes, "probe_llm", fake_probe)
+    r = client.post(
+        "/api/v1/llm/probe", headers=H, json={"provider": "together", "model": "org/m"}
+    ).json()
+    assert r["ok"] is True
+    cfg = seen["cfg"]
+    assert cfg.api_key is not None and cfg.api_key.get_secret_value() == "tg-secret"
+    assert cfg.base_url == "https://example.invalid/v1"
+    assert "tg-secret" not in str(r)

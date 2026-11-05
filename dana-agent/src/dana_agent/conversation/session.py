@@ -33,6 +33,7 @@ from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
+from dana_agent.conversation.ack import AckAudioRawFrame, AckCache
 from dana_agent.conversation.latency import TurnClock
 from dana_agent.conversation.pipeline import build_cascade_pipeline, build_s2s_pipeline
 from dana_agent.conversation.processors import WakeGateProcessor
@@ -70,6 +71,8 @@ class _LatencyObserver(BaseObserver):  # type: ignore[misc]
             self._clock.mark_stt_final()
         elif isinstance(frame, LLMTextFrame):
             self._clock.mark_llm_first_token()
+        elif isinstance(frame, AckAudioRawFrame):
+            self._clock.mark_ack_first_audio()  # not the real reply
         elif isinstance(frame, TTSAudioRawFrame):
             self._clock.mark_tts_first_audio()
         elif isinstance(frame, BotStoppedSpeakingFrame):
@@ -122,6 +125,16 @@ class ConversationSession:
             except Exception as exc:  # noqa: BLE001
                 log.warning("warmup_skipped", exc=repr(exc))
 
+        ack_cache: AckCache | None = None
+        if lat.ack_enabled and self._cfg.conversation.mode != "s2s" and self._stack.tts:
+            ack_cache = AckCache()
+            try:
+                await asyncio.wait_for(
+                    ack_cache.fill(self._stack.tts, lat.ack_phrases), timeout=10.0
+                )
+            except Exception as exc:  # noqa: BLE001 - no ack is fine
+                log.warning("ack_prepare_failed", exc=repr(exc))
+
         if self._cfg.conversation.mode == "s2s":
             _, pipeline = build_s2s_pipeline(
                 self._cfg,
@@ -138,6 +151,7 @@ class ConversationSession:
                 bypass_wake_gate=self._bypass_wake_gate,
                 mic_gate=self._mic_gate,
                 clock=clock,
+                ack_cache=ack_cache,
             )
             self._wake_gate = wake_gate
 

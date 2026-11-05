@@ -28,6 +28,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
+from dana_agent.conversation.ack import AckProcessor
 from dana_agent.conversation.mute import BotSpeakingGate
 from dana_agent.conversation.processors import (
     BrainProcessor,
@@ -44,6 +45,7 @@ from dana_agent.providers.wake.assemblyai import AssemblyAIWakeDetector
 if TYPE_CHECKING:
     from dana_agent.app import AssembledStack
     from dana_agent.config import AppConfig
+    from dana_agent.conversation.ack import AckCache
     from dana_agent.conversation.latency import TurnClock
     from dana_agent.conversation.mute import MicGate
 
@@ -185,6 +187,7 @@ def build_cascade_pipeline(
     bypass_wake_gate: bool = False,
     mic_gate: MicGate | None = None,
     clock: TurnClock | None = None,
+    ack_cache: AckCache | None = None,
 ) -> tuple[LocalAudioTransport, Pipeline, WakeGateProcessor]:
     """Assemble and return the Pipecat cascade pipeline.
 
@@ -236,7 +239,11 @@ def build_cascade_pipeline(
         stages.append(MuteProcessor(mic_gate))
     if bot_gate is not None:
         stages.append(HalfDuplexGateProcessor(bot_gate))
-    stages += [wake_gate, stt, brain, tts, transport.output()]
+    stages.append(wake_gate)
+    if ack_cache is not None and cfg.conversation.latency.ack_enabled:
+        # After the wake gate: only VAD stops of an ACTIVE turn reach it.
+        stages.append(AckProcessor(ack_cache, language=cfg.language))
+    stages += [stt, brain, tts, transport.output()]
 
     pipeline = Pipeline(stages)
 
