@@ -234,7 +234,12 @@ class FakePage:
         if name == "mute":
             m["muted"] = bool(arg[0])
             return m["muted"]
+        if name == "skip_ad":
+            return True
+        if name == "fullscreen":
+            return "ok"
         raise AssertionError(f"FakePage.evaluate: unknown canned script {name!r}")
+
 
 
 def browser_with_fake_page(provider: Any, page: FakePage | None = None) -> FakePage:

@@ -154,6 +154,7 @@ _PRESS_KEYS: frozenset[str] = frozenset(
         "Shift+,",
         "Shift+ArrowLeft",
         "Shift+ArrowRight",
+        "F11",
     }
 )
 
@@ -170,8 +171,11 @@ _MEDIA_ACTIONS: frozenset[str] = frozenset(
         "state",
         "next",
         "prev",
+        "skip_ad",
+        "fullscreen",
     }
 )
+
 _RATE_MIN, _RATE_MAX = 0.25, 2.0
 # A relative seek is clamped to ±6 h — generous for any real media, and it
 # bounds runaway model arithmetic.
@@ -240,7 +244,44 @@ _MEDIA_SCRIPTS: dict[str, str] = {
         " const v = document.querySelector('video, audio');"
         " if (!v) return 'no-media'; v.muted = m; return v.muted; }"
     ),
+    "skip_ad": (
+        "/* dana:skip_ad */ () => {"
+        " const selectors = ["
+        " '.ytp-ad-skip-button', '.ytp-ad-skip-button-modern', '.ytp-skip-ad-button',"
+        " '.ytp-ad-skip-button-slot button', 'button.ytp-ad-skip-button',"
+        " '.ytp-ad-overlay-close-button', '.ytp-ad-skip-button-container'"
+        " ];"
+        " let skipped = false;"
+        " for (const sel of selectors) {"
+        " const btn = document.querySelector(sel);"
+        " if (btn && btn.offsetParent !== null) { btn.click(); skipped = true; }"
+        " }"
+        " const ad = document.querySelector('.ad-showing, .ytp-ad-player-overlay');"
+        " if (ad) {"
+        " const v = document.querySelector('video');"
+        " if (v) {"
+        " v.muted = true;"
+        " v.playbackRate = 16.0;"
+        " if (isFinite(v.duration) && v.duration > 0) { v.currentTime = v.duration - 0.1; }"
+        " }"
+        " skipped = true;"
+        " }"
+        " return skipped; }"
+    ),
+    "fullscreen": (
+        "/* dana:fullscreen */ () => {"
+        " const v = document.querySelector('video, audio');"
+        " if (!v) return 'no-media';"
+        " if (!document.fullscreenElement) {"
+        " const target = (v.requestFullscreen ? v : v.parentElement) || v;"
+        " if (target && target.requestFullscreen) { target.requestFullscreen(); }"
+        " } else if (document.exitFullscreen) {"
+        " document.exitFullscreen();"
+        " }"
+        " return 'ok'; }"
+    ),
     # scroll helper shared by browser_scroll(to=...)
+
     "scroll_to": (
         "/* dana:scroll_to */ ([w]) => {"
         " if (w === 'top') { window.scrollTo({top: 0}); }"
@@ -284,6 +325,34 @@ def _safe_download_name(url: str) -> str:
     return name.lstrip(".") or "download.bin"
 
 
+def _find_brave_executable() -> str | None:
+    import os  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    candidates = [
+        Path(r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"),
+        Path(r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"),
+        Path(os.path.expandvars(r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe")),
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
+def _default_user_data_dir() -> str | None:
+    import os  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    brave_user_data = Path(os.path.expandvars(r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data"))
+    if brave_user_data.exists():
+        return str(brave_user_data)
+    chrome_user_data = Path(os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"))
+    if chrome_user_data.exists():
+        return str(chrome_user_data)
+    return None
+
+
 def _speakable_media(result: Any) -> str:
     """Turn the state-script dict into a short, TTS-friendly string."""
     if not isinstance(result, dict):
@@ -311,8 +380,13 @@ class BrowserActions(ActionProvider):
         self._profile_dir = Path(cfg.browser_profile_dir)
         self._storage_state = Path(cfg.browser_storage_state_path)
         self._headless = cfg.browser_headless
+        self._cdp_url = cfg.browser_cdp_url
+        self._channel = cfg.browser_channel
+        self._executable_path = cfg.browser_executable_path
+        self._use_user_profile = cfg.browser_use_user_profile
         self._pw: Any = None  # playwright instance (lazy)
         self._ctx: Any = None  # persistent BrowserContext (lazy)
+        self._browser_obj: Any = None  # Browser instance when connecting over CDP (lazy)
         self._page: Any = None  # active Page (lazy)
         self._page_lock: Any = None  # asyncio.Lock, created on first use
         self._tabs: list[Any] = []  # tracked Pages (tab manager, M2)
@@ -447,19 +521,60 @@ class BrowserActions(ActionProvider):
                     "install dana-agent[actions] then run `playwright install chromium`"
                 ) from exc
 
-            self._profile_dir.mkdir(parents=True, exist_ok=True)
+            # 1. Connect over CDP if configured or requested (attaches to active Brave/Chrome)
+            cdp_url = self._cdp_url
+            if not cdp_url and self._use_user_profile:
+                cdp_url = "http://127.0.0.1:9222"
+            if cdp_url:
+                try:
+                    self._pw = await async_playwright().start()
+                    self._browser_obj = await self._pw.chromium.connect_over_cdp(cdp_url)
+                    contexts = self._browser_obj.contexts
+                    if contexts:
+                        self._ctx = contexts[0]
+                    else:
+                        self._ctx = await self._browser_obj.new_context(no_viewport=True)
+                    self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+                    self._tabs = list(self._ctx.pages)
+                    log.info("connected_to_browser_via_cdp", cdp_url=cdp_url)
+                    return self._page
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("cdp_connect_failed", cdp_url=cdp_url, error=str(exc))
+                    if self._cdp_url:
+                        raise
+
+            # 2. Launch persistent context (Brave or Chromium)
+            exec_path = self._executable_path
+            channel = self._channel
+            profile_dir = self._profile_dir
+
+            if not exec_path and not channel:
+                brave_bin = _find_brave_executable()
+                if brave_bin:
+                    exec_path = brave_bin
+                    log.info("auto_detected_brave_executable", path=exec_path)
+
+            if self._use_user_profile:
+                user_data = _default_user_data_dir()
+                if user_data:
+                    profile_dir = Path(user_data)
+
+            profile_dir.mkdir(parents=True, exist_ok=True)
             self._pw = await async_playwright().start()
-            # Persistent context on a DEDICATED profile dir isolates cookies/storage
-            # from the user's daily Chrome. It returns the context itself (no separate
-            # browser object; closing the context closes the browser).
-            self._ctx = await self._pw.chromium.launch_persistent_context(
-                user_data_dir=str(self._profile_dir),
-                headless=self._headless,
-                # Downloads only via the explicit browser_download tool (M-later);
-                # never as a side effect of a click.
-                accept_downloads=False,
-                args=["--no-first-run", "--no-default-browser-check"],
-            )
+
+            launch_kwargs: dict[str, Any] = {
+                "user_data_dir": str(profile_dir),
+                "headless": self._headless,
+                "no_viewport": True,
+                "accept_downloads": False,
+                "args": ["--no-first-run", "--no-default-browser-check", "--start-maximized"],
+            }
+            if exec_path:
+                launch_kwargs["executable_path"] = exec_path
+            elif channel:
+                launch_kwargs["channel"] = channel
+
+            self._ctx = await self._pw.chromium.launch_persistent_context(**launch_kwargs)
 
             def _on_popup(popup: Any) -> None:
                 # An allowlisted page can still be coerced into opening windows:
@@ -477,31 +592,77 @@ class BrowserActions(ActionProvider):
                 if popup not in self._tabs:
                     self._tabs.append(popup)
 
+            await self._ctx.add_init_script(
+                "(() => {"
+                " if (location.hostname.includes('youtube.com')) {"
+                " setInterval(() => {"
+                " const selectors = ["
+                " '.ytp-ad-skip-button', '.ytp-ad-skip-button-modern', '.ytp-skip-ad-button',"
+                " '.ytp-ad-skip-button-slot button', 'button.ytp-ad-skip-button',"
+                " '.ytp-ad-overlay-close-button', '.ytp-ad-skip-button-container'"
+                " ];"
+                " for (const sel of selectors) {"
+                " const btn = document.querySelector(sel);"
+                " if (btn && btn.offsetParent !== null) { btn.click(); }"
+                " }"
+                " const ad = document.querySelector('.ad-showing, .ytp-ad-player-overlay');"
+                " if (ad) {"
+                " const v = document.querySelector('video');"
+                " if (v) {"
+                " v.muted = true;"
+                " v.playbackRate = 16.0;"
+                " if (isFinite(v.duration) && v.duration > 0) { v.currentTime = v.duration - 0.1; }"
+                " }"
+                " }"
+                " }, 2000);"
+                " }"
+                "})();"
+            )
             self._ctx.on("page", _on_popup)
             self._ctx.set_default_timeout(_NAV_TIMEOUT_MS)  # auto-wait cap; NO sleeps
             self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
-            self._tabs = [self._page]
+            self._tabs = list(self._ctx.pages) if self._ctx.pages else [self._page]
+            self._select_best_page()
+
         return self._page
 
     async def aclose(self) -> None:
         if self._ctx is not None:
-            # Export a portable auth blob (cookies + localStorage) for next run.
-            # It contains live session secrets → stored under .dana/ (gitignored).
             try:
-                self._storage_state.parent.mkdir(parents=True, exist_ok=True)
-                await self._ctx.storage_state(path=str(self._storage_state))
+                if self._storage_state and not self._cdp_url:
+                    self._storage_state.parent.mkdir(parents=True, exist_ok=True)
+                    await self._ctx.storage_state(path=str(self._storage_state))
+            except Exception:  # noqa: BLE001
+                pass
             finally:
-                await self._ctx.close()
+                try:
+                    await self._ctx.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        if self._browser_obj is not None:
+            try:
+                await self._browser_obj.close()
+            except Exception:  # noqa: BLE001
+                pass
         if self._pw is not None:
-            await self._pw.stop()
-        self._pw = self._ctx = self._page = None
+            try:
+                await self._pw.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        self._pw = self._ctx = self._page = self._browser_obj = None
 
     # --- execution (already-authorised action) ---------------------------
 
     async def execute(self, action: Action) -> ActionResult:
         if action.tool not in _KNOWN_TOOLS:
             return ActionResult(ok=False, error=f"unknown browser tool {action.tool!r}")
-        page = await self._ensure_page()
+        await self._ensure_page()
+        page = self._select_best_page()
+        if action.tool in ("browser_media", "browser_press_key", "browser_zoom", "browser_click") and hasattr(page, "bring_to_front"):
+            try:
+                await page.bring_to_front()
+            except Exception:  # noqa: BLE001
+                pass
         args = action.arguments
         try:
             return await self._dispatch(page, action.tool, args)
@@ -589,7 +750,42 @@ class BrowserActions(ActionProvider):
         """Visits oldest→newest (index 1 = oldest of the recent window)."""
         return self._visits
 
+    def _select_best_page(self) -> Any:
+        """Find the best open tab to act on:
+        1. If self._page is valid and not on about:blank, use self._page.
+        2. Otherwise search context pages for an allowlisted content tab (e.g. YouTube).
+        3. Fall back to the first available page."""
+        pages = (
+            [p for p in self._ctx.pages if not getattr(p, "is_closed", lambda: False)()]
+            if (self._ctx is not None and getattr(self._ctx, "pages", None))
+            else self._tabs
+        )
+        if not pages:
+            return self._page
+
+        current_url = str(getattr(self._page, "url", "") or "")
+        if current_url and current_url != "about:blank" and self._host_allowed(current_url):
+            return self._page
+
+        for p in pages:
+            p_url = str(getattr(p, "url", "") or "")
+            if p_url and p_url != "about:blank" and self._host_allowed(p_url):
+                self._page = p
+                return p
+
+        for p in pages:
+            p_url = str(getattr(p, "url", "") or "")
+            if p_url and p_url != "about:blank":
+                self._page = p
+                return p
+
+        if not self._page or self._page not in pages:
+            self._page = pages[0]
+        return self._page
+
     def _tracked_tabs(self) -> list[Any]:
+        if self._ctx is not None and getattr(self._ctx, "pages", None):
+            self._tabs = [p for p in self._ctx.pages if not getattr(p, "is_closed", lambda: False)()]
         return self._tabs if self._tabs else ([self._page] if self._page is not None else [])
 
     async def _download(self, args: dict[str, object]) -> ActionResult:
@@ -969,11 +1165,24 @@ class BrowserActions(ActionProvider):
             result = await self._eval_media(page, "mute", action == "mute")
             return ActionResult(ok=True, output="muted" if result else "unmuted")
 
+        if action == "skip_ad":
+            result = await self._eval_media(page, "skip_ad", None)
+            if result:
+                return ActionResult(ok=True, output="skipped ad")
+            return ActionResult(ok=True, output="no active ad found")
+
+        if action == "fullscreen":
+            result = await self._eval_media(page, "fullscreen", None)
+            if result == "ok":
+                return ActionResult(ok=True, output="toggled fullscreen")
+            return self._no_media_result(result)
+
         if action == "state":
             result = await self._eval_media(page, "state", None)
             if isinstance(result, dict):
                 return ActionResult(ok=True, output=_speakable_media(result))
             return self._no_media_result(result)
+
 
         if action in ("next", "prev"):
             # No generic HTML5 API for track-skipping — adapter territory:

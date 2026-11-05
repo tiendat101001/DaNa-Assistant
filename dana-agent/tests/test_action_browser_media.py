@@ -276,8 +276,26 @@ def test_media_actions_registry_is_bounded() -> None:
             "next",
             "prev",
             "state",
+            "skip_ad",
+            "fullscreen",
         }
     )
+
+
+async def test_media_skip_ad_action() -> None:
+    provider = make_provider(["youtube.com"])
+    _ = browser_with_fake_page(provider, FakePage(url="https://youtube.com/watch?v=x"))
+    result = await provider.execute(media("skip_ad"))
+    assert result.ok is True
+
+
+async def test_media_fullscreen_action() -> None:
+    provider = make_provider(["youtube.com"])
+    _ = browser_with_fake_page(provider, FakePage(url="https://youtube.com/watch?v=x"))
+    result = await provider.execute(media("fullscreen"))
+    assert result.ok is True
+
+
 
 
 # --- next/prev (adapter-level track skipping) --------------------------------

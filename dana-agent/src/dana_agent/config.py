@@ -119,13 +119,19 @@ class ActionsConfig(ProviderConfig):
     forbid_purchases: bool = False
 
     # --- browser (Playwright) provider ---
-    # Dedicated, disposable profile dir — NEVER the user's real Chrome profile.
+    # Profile dir for persistent browser session.
     browser_profile_dir: str = ".dana/browser-profile"
     # Portable auth blob exported on close (contains live cookies → treat as a
     # secret; lives under .dana/ which is gitignored).
     browser_storage_state_path: str = ".dana/browser-state.json"
     # Visible by default so the user can watch and trust what the agent does.
     browser_headless: bool = False
+    # Connect to an existing running browser session via CDP (e.g. http://127.0.0.1:9222)
+    browser_cdp_url: str | None = None
+    # Browser channel ('brave', 'chrome', 'msedge') or path to executable
+    browser_channel: str | None = None
+    browser_executable_path: str | None = None
+    browser_use_user_profile: bool = False
 
     # --- OS (Windows) provider ---
     # Bounded OS control is dangerous → OFF by default. Even when the provider is
@@ -262,8 +268,8 @@ class AppConfig(BaseSettings):
         llm = self.conversation.llm
         wake = self.wake
 
-        # Propagate top-level language into STT so providers can set the
-        # correct transcription language (better accuracy than auto-detect).
+        # Propagate top-level language into STT so providers use the fixed
+        # target language instead of auto-detecting.
         if stt.language_code == "en" and self.language != "en":
             stt.language_code = self.language
 
@@ -281,6 +287,16 @@ class AppConfig(BaseSettings):
                 tts.api_key = _env("GEMINI_API_KEY", "GOOGLE_API_KEY")
             elif tts.provider == "elevenlabs":
                 tts.api_key = _env("ELEVENLABS_API_KEY")
+
+        if tts.provider == "vieneu" and not tts.base_url:
+            url_secret = (
+                resolve_secret("TTS_VIENEU_BASE_URL")
+                or resolve_secret("DANA_CONVERSATION__TTS__BASE_URL")
+            )
+            if url_secret:
+                tts.base_url = url_secret
+
+
 
         if not llm.api_key:
             if llm.provider == "gemini":

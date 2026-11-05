@@ -112,7 +112,10 @@ def human_preview(tool: str, arguments: dict[str, object]) -> str:
             return f"seek to {_fmt_secs(safe.get('position_s'))}"
         if act == "rate":
             return f"set speed {safe.get('rate', '?')}x"
+        if act == "skip_ad":
+            return "skip YouTube ad"
         return f"{tool}: {act}"
+
     if tool == "browser_search":
         suffix = " and open the first result" if safe.get("open_first") else ""
         return f"search {safe.get('engine', '?')} for '{safe.get('query', '')}'{suffix}"

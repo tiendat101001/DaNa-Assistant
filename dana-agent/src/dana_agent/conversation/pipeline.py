@@ -58,6 +58,7 @@ def _build_stt_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
 
     if provider == "assemblyai":
         from pipecat.services.assemblyai.stt import AssemblyAISTTService  # noqa: PLC0415
+        from pipecat.transcriptions.language import Language  # noqa: PLC0415
 
         api_key = (
             cfg.conversation.stt.api_key.get_secret_value()
@@ -68,10 +69,28 @@ def _build_stt_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
             raise ValueError(
                 "DANA_CONVERSATION__STT__API_KEY is required for the assemblyai STT provider"
             )
-        return AssemblyAISTTService(api_key=api_key, sample_rate=_STT_SAMPLE_RATE)
+
+        lang_code = cfg.conversation.stt.language_code
+        try:
+            lang_enum = Language(lang_code)
+        except ValueError:
+            lang_enum = Language.EN
+
+        settings = AssemblyAISTTService.Settings(
+            language=lang_enum,
+            language_code=lang_code,
+            language_codes=[lang_code],
+            language_detection=False,
+        )
+        return AssemblyAISTTService(
+            api_key=api_key,
+            sample_rate=_STT_SAMPLE_RATE,
+            settings=settings,
+        )
 
     if provider == "deepgram":
         from pipecat.services.deepgram.stt import DeepgramSTTService  # noqa: PLC0415
+        from pipecat.transcriptions.language import Language  # noqa: PLC0415
 
         api_key = (
             cfg.conversation.stt.api_key.get_secret_value()
@@ -82,7 +101,20 @@ def _build_stt_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
             raise ValueError(
                 "DANA_CONVERSATION__STT__API_KEY is required for the deepgram STT provider"
             )
-        return DeepgramSTTService(api_key=api_key)
+
+        lang_code = cfg.conversation.stt.language_code
+        try:
+            lang_enum = Language(lang_code)
+        except ValueError:
+            lang_enum = Language.EN
+
+        settings = DeepgramSTTService.Settings(
+            language=lang_enum,
+        )
+        return DeepgramSTTService(
+            api_key=api_key,
+            settings=settings,
+        )
 
     if provider == "mock":
         # In cascade mode with a mock STT, wrap our existing mock provider in a
@@ -139,6 +171,7 @@ def _build_wake_gate(cfg: AppConfig, *, bypass: bool) -> WakeGateProcessor:
             api_key=api_key,
             phrase=cfg.wake.phrase,
             sample_rate=_STT_SAMPLE_RATE,
+            language_code=cfg.conversation.stt.language_code,
         )
         log.info("wake_detector_ready", phrase=cfg.wake.phrase)
     elif not bypass:

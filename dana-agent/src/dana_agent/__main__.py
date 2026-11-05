@@ -97,16 +97,24 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def _install_stop_handlers(stop_event: asyncio.Event) -> None:
-    """POSIX signal handlers set the stop event; Windows relies on KeyboardInterrupt."""
-    if sys.platform == "win32":
-        return
+    """POSIX signal handlers set the stop event; Windows uses signal.signal."""
     loop = asyncio.get_running_loop()
 
     def _handle_signal() -> None:
-        stop_event.set()
+        loop.call_soon_threadsafe(stop_event.set)
 
-    loop.add_signal_handler(signal.SIGINT, _handle_signal)
-    loop.add_signal_handler(signal.SIGTERM, _handle_signal)
+    if sys.platform != "win32":
+        loop.add_signal_handler(signal.SIGINT, _handle_signal)
+        loop.add_signal_handler(signal.SIGTERM, _handle_signal)
+    else:
+        def _win_sig_handler(sig: int, frame: object) -> None:
+            loop.call_soon_threadsafe(stop_event.set)
+
+        try:
+            signal.signal(signal.SIGINT, _win_sig_handler)
+            signal.signal(signal.SIGTERM, _win_sig_handler)
+        except (ValueError, OSError):
+            pass
 
 
 async def _run_session(
@@ -119,12 +127,24 @@ async def _run_session(
 
     run_task = asyncio.create_task(session.run())
     stop_task = asyncio.create_task(stop_event.wait())
-    done, pending = await asyncio.wait([run_task, stop_task], return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-
-    await session.stop()
-    await stack.aclose()
+    done: set[asyncio.Task[Any]] = set()
+    try:
+        done, pending = await asyncio.wait(
+            [run_task, stop_task], return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        log.info("shutdown_requested")
+    finally:
+        try:
+            await session.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await stack.aclose()
+        except Exception:  # noqa: BLE001
+            pass
 
     for task in done:
         exc = task.exception() if not task.cancelled() else None
@@ -161,13 +181,29 @@ async def _run_with_control(
 
     tray = _maybe_start_tray(controller, url, log=log)
 
-    await stop_event.wait()
-
-    if tray is not None:
-        tray.stop()
-    await controller.stop_session()
-    await server.stop()
-    await stack.aclose()
+    try:
+        await stop_event.wait()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        log.info("shutdown_requested")
+    finally:
+        log.info("stopping_control_server")
+        if tray is not None:
+            try:
+                tray.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            await controller.stop_session()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await server.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await stack.aclose()
+        except Exception:  # noqa: BLE001
+            pass
     return 0
 
 

@@ -15,8 +15,9 @@ inactivity_timeout_s = 30.0
 mode = "cascade"
 
 [conversation.stt]
-provider = "mock"        # -> "deepgram"
+provider = "mock"        # -> "deepgram" | "assemblyai"
 model = "mock-stt"
+language_code = "en"     # Fixed target language (defaults to top-level 'language': "en" | "vi")
 
 [conversation.llm]
 provider = "mock"        # -> "gemini" | "openai" | "anthropic" | "openai_compat"

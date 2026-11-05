@@ -70,3 +70,11 @@ def test_unknown_field_is_ignored() -> None:
 def test_out_of_range_sensitivity_rejected() -> None:
     with pytest.raises(ValidationError):
         AppConfig.model_validate({"wake": {"sensitivity": 5.0}})
+
+
+def test_stt_language_propagates_from_app_language(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DANA_LANGUAGE", "vi")
+    cfg = AppConfig(_env_file=None)  # type: ignore[call-arg]
+    assert cfg.language == "vi"
+    assert cfg.conversation.stt.language_code == "vi"
+

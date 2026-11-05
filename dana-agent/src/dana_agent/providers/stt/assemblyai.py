@@ -87,7 +87,9 @@ class AssemblyAISTT(STTProvider):
 
         params = RealTimeParameters(
             sample_rate=_SAMPLE_RATE,
+            language_code=self._cfg.language_code,
             language_codes=[self._cfg.language_code],
+            language_detection=False,
         )
         await transcriber.connect(params)
 

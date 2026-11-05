@@ -175,10 +175,10 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "browser_press_key",
-        "Press a single keyboard key (bounded vocabulary: Enter, Escape, arrows, "
+        "Press a single keyboard key (bounded vocabulary: Enter, Escape, F11, arrows, "
         "player keys k/j/l/m/f/t/c, digits 0-9, Space, Home/End, Shift+. etc). "
         "Use Enter to submit a filled form or search.",
-        (ToolArg("key", str, "One key from the allowed vocabulary, e.g. 'Enter' or 'l'."),),
+        (ToolArg("key", str, "One key from the allowed vocabulary, e.g. 'Enter', 'F11' or 'l'."),),
     ),
     ToolSpec(
         "browser_scroll",
@@ -197,13 +197,16 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "move by delta seconds (+42 forward, -5 back, e.g. 'jump forward 40 "
         "seconds' or 'go back a bit'); seek_to = ABSOLUTE position in seconds "
         "(e.g. 'skip to 3:20' → position_s=200). Also: play, pause, toggle, "
-        "rate 0.25-2.0, mute/unmute, next/prev (jumps via the site's player "
+        "fullscreen, rate 0.25-2.0, mute/unmute, next/prev (jumps via the site's player "
         "control where mapped, e.g. YouTube; otherwise use os_media_key), and "
         "state (title/position/duration).",
         (
             ToolArg(
-                "action", str, "play|pause|toggle|seek|seek_to|rate|mute|unmute|next|prev|state"
+                "action",
+                str,
+                "play|pause|toggle|seek|seek_to|rate|mute|unmute|next|prev|skip_ad|fullscreen|state",
             ),
+
             ToolArg(
                 "delta_s",
                 float,

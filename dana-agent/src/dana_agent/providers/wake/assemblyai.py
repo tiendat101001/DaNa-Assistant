@@ -44,11 +44,13 @@ class AssemblyAIWakeDetector:
         *,
         sample_rate: int = 16_000,
         timeout: float = 8.0,
+        language_code: str = "en",
     ) -> None:
         self._api_key = api_key
         self._phrase = phrase.lower()
         self._sample_rate = sample_rate
         self._timeout = timeout
+        self._language_code = language_code
 
     async def detect(self, pcm: bytes) -> bool:
         """Transcribe *pcm* and return True if the wake phrase is present."""
@@ -97,7 +99,12 @@ class AssemblyAIWakeDetector:
         transcriber.on(RealTimeEvents.Termination, _on_termination)
         transcriber.on(RealTimeEvents.Error, _on_error)
 
-        params = RealTimeParameters(sample_rate=self._sample_rate)
+        params = RealTimeParameters(
+            sample_rate=self._sample_rate,
+            language_code=self._language_code,
+            language_codes=[self._language_code],
+            language_detection=False,
+        )
         await transcriber.connect(params)
 
         for offset in range(0, len(pcm), _CHUNK_SIZE):
