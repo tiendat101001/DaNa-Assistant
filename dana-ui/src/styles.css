@@ -658,3 +658,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .tbl td { border: 0; }
   .tbl td::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; }
 }
+.model-card, .card, .banner, .job { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  body { overflow-x: hidden; }
+  .model-grid, .form-grid, .budget-grid { grid-template-columns: 1fr; }
+  .hub-controls select, .hub-controls button { flex: 1; }
+}

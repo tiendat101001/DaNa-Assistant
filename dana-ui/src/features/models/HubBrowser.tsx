@@ -102,6 +102,11 @@ export function HubBrowser({
           {error}
         </div>
       )}
+      {loading && sorted.length === 0 && !error && (
+        <p className="muted" role="status">
+          Loading catalog from huggingface.co (first load can take ~15 s)…
+        </p>
+      )}
       {!error && !loading && sorted.length === 0 && <p className="muted">No models match.</p>}
       <div className="model-grid">
         {sorted.map((m) => (
