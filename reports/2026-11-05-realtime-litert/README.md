@@ -27,11 +27,13 @@ plug-and-play computer use instead of hard-coded sites, and a mobile plan.
    Together are one-click presets with a live "Measure latency" probe.
 4. **Honest latency status:** the measured real-component bench gives
    **≈ 1.19 s** voice → first *reply* audio on this 4-vCPU container (VAD 200 +
-   Moonshine 423 + LLM 426 + Kitten 138), vs ≈ 2–4 s before. That is a 2–3×
-   improvement, but the reply is not yet < 0.6 s. With the new opt-in **instant
-   acknowledgement**, the user hears DaNa at **≈ 220 ms**. The remaining gap has a
-   ranked plan: incremental STT while the user speaks, a local GPU LLM via SGLang,
-   prefix caching, and a faster CPU. See `02-…` §5.
+   Moonshine 423 + LLM 426 + Kitten 138), and **≈ 0.99 s** with the new
+   **speculative STT** (measured −240 ms). That compares with ≈ 2–4 s before, a
+   2–4× improvement, but the reply is not yet < 0.6 s. With the opt-in **instant
+   acknowledgement**, the user hears DaNa at **≈ 220 ms**. The remaining ≈ 400 ms
+   is mostly the cloud LLM's round-trip floor (≈ 370–450 ms on every serverless
+   Together model). The levers that remain are a local GPU LLM via SGLang
+   (presets and scripts ready), a desktop CPU, and prefix caching. See `02-…` §5.
 5. **Model registry:** browse the 443-repo catalog, see file recommendations
    (NPU variants filtered out; multi-stage models complete; tokenizer companions
    added), and **pull + load in one request**. Verified live against

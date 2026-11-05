@@ -40,3 +40,9 @@ Status: done, default off. config.py gained only `conversation.latency.ack_enabl
 
 ### Final gates
 Offline suite 566 passed, 4 skipped, 58 live deselected; ruff check/format clean; mypy only the 5 known os_win.py errors.
+
+### 3. Keep-warm + speculative STT (C3), both default OFF
+- `latency.keepalive_s` (0=off): token-free `models.list()` on the model's own async client every N s; cancelled on session stop. Measured after 90 s idle on Together: keepalive 488/448 ms vs off 376/383 ms -> no cold-connection penalty seen on this endpoint; no measurable benefit here.
+- `latency.speculative_stt` (False): transcribes at 60 ms silence onset, reuse on VAD stop, cancel on resume. Real Moonshine, VAD stop -> transcript: normal 498/380/442 ms vs speculative 196/224/200 ms (~240 ms saved). Tests: 7 new (reuse, cancel, disabled, error, keepalive ping/failure/loop). session.py wiring is not unit-tested.
+- Projection with both on: ~987 ms (still over 600 ms).
+Final gate: see lead's report.

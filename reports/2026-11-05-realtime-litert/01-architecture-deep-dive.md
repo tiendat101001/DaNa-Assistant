@@ -234,7 +234,16 @@ languages.
 3. **Warm-up at session start**: load local models and run one dummy inference;
    send one tiny LLM call so TLS/HTTP2 connections and server-side prompt caches
    are hot. This is bounded by a timeout, and failures are logged, not fatal.
-4. **Per-turn clock**: `TurnClock` stamps end-of-speech, STT final, LLM first
+4. **Speculative STT** (opt-in): after 60 ms of low energy inside an utterance,
+   transcription of the buffered audio starts in the background. VAD's 200 ms
+   stop window then overlaps STT instead of preceding it, and the run is
+   cancelled if speech resumes. Measured −240 ms on real Moonshine.
+5. **Instant acknowledgement** (opt-in): a cached "Mm-hm." / "Dạ." plays at
+   end-of-speech (≈ 220 ms perceived). It is tracked separately as
+   `ack_first_audio`.
+6. **Connection keep-warm** (opt-in): a token-free `models.list()` ping keeps the
+   LLM's HTTP connection alive between turns.
+7. **Per-turn clock**: `TurnClock` stamps end-of-speech, STT final, LLM first
    token and TTS first audio. It emits `latency` events (`stt`, `llm_ttft`,
    `tts_ttfb`, `voice_to_first_audio` + `over_budget`), which flow to the UI's
    latency waterfall over the existing log→WebSocket bridge.

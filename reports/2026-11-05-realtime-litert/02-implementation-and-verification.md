@@ -82,6 +82,9 @@ which renders `/api/v1/config/schema`.
 | `conversation.latency.vad_stop_secs` | 0.2 | end-of-utterance silence |
 | `conversation.latency.tts_first_chunk_min_chars` | 20 | eager first-clause flush (0 = off) |
 | `conversation.latency.warmup_on_start` | true | warm STT/TTS/LLM before the first turn |
+| `conversation.latency.speculative_stt` | false | start STT after 60 ms of silence and reuse it at VAD stop (measured −240 ms) |
+| `conversation.latency.ack_enabled` / `ack_phrases` | false / `{"en":"Mm-hm.","vi":"Dạ."}` | instant acknowledgement at end-of-speech (perceived ≈ 220 ms) |
+| `conversation.latency.keepalive_s` | 0 (off) | token-free `models.list()` ping to keep the LLM connection warm during sessions |
 | `conversation.stt.provider` | — | `litert` \| `faster_whisper` \| `assemblyai` \| `deepgram` |
 | `conversation.stt.model` | — | e.g. `litert-community/moonshine-tiny` (EN) or `litert-community/whisper-tiny` (VI) |
 | `conversation.{stt,tts}.num_threads` | 4 | = physical cores is best (measured) |
@@ -102,6 +105,8 @@ DANA_CONVERSATION__TTS__VOICE=expr-voice-2-m
 DANA_CONVERSATION__LLM__PROVIDER=together          # with TG_API_KEY / TG_BASE_URL / TG_MODEL_ID
 DANA_CONVERSATION__LLM__MAX_TOKENS=160
 DANA_CONVERSATION__LLM__EXTRA={"extra_body": {"reasoning": {"enabled": false}}}
+DANA_CONVERSATION__LATENCY__SPECULATIVE_STT=true    # −240 ms measured
+DANA_CONVERSATION__LATENCY__ACK_ENABLED=true        # optional: "Mm-hm." at ≈ 220 ms
 ```
 Vietnamese: `STT__MODEL=litert-community/whisper-tiny`, `TTS__PROVIDER=piper` (a vi_VN voice).
 
@@ -138,7 +143,7 @@ then apply the "SGLang Qwen2.5-1.5B" preset and use **Check server**.
 ### 4.1 Backend gate (Team Lead A, final re-run)
 | Gate | Result |
 |---|---|
-| Offline suite `pytest -m 'not live'` | **581 passed, 4 skipped, 0 failed** (final re-run after the latency sprint and the catalog-classification fix) (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
+| Offline suite `pytest -m 'not live'` | **586 passed, 4 skipped, 0 failed** (final re-run after both latency sprints and the catalog-classification fix) (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
 | `ruff check src tests scripts` | clean |
 | `ruff format --check` | clean (157 files) |
 | `mypy` (strict, whole project) | clean except 5 accepted `ctypes.windll` errors in `os_win.py` that only Linux mypy reports (already present before this work) |
@@ -272,7 +277,19 @@ model choice (§5.3 #8).
 | 5 | **Smaller first clause** (`tts_first_chunk_min_chars` 12–15) | −50…−100 ms | XS | Kitten costs ≈ 7 ms/char |
 | 6 | **Vietnamese ASR**: whisper-tiny has a static 128-token decoder (≈ 65 ms/token). Options: a `Qwen3-ASR-0.6B` LiteRT trial, or a cloud streaming STT for VI only | −500 ms+ (VI) | M | per-language STT routing is a config change |
 | 7 | Hardware: the container has 4 vCPU; a desktop CPU with 8+ performance cores | −20…−40 % compute | — | set `num_threads` = physical cores |
-| 8 | **Connection keep-warm** during sessions: the first turn after an idle gap otherwise re-pays ≈ 750 ms of connection setup | −750 ms on post-pause turns | S | see the final sprint results below |
+| 8 | **Connection keep-warm** during sessions (shipped as `keepalive_s`, opt-in) | up to −750 ms on post-pause turns where the provider/proxy closes idle connections | done | no gain measured on Together after a 90 s idle; kept as a safeguard |
+
+### 5.4 Final sprint (shipped, opt-in, tested)
+| Feature | Mechanism | Measured |
+|---|---|---|
+| **Speculative STT** (`speculative_stt`) | per-frame RMS in `ProviderSTTProcessor`; after 60 ms of low energy, transcribe the buffered audio in the background; cancel if speech resumes; reuse at VAD stop (re-run on error) | real Moonshine, VAD stop → transcript: **498 / 380 / 442 ms → 196 / 224 / 200 ms (≈ −240 ms)** |
+| **Keep-warm** (`keepalive_s`) | token-free `root_async_client.models.list()` on the model's own pool every N s during a session; cancelled on stop | Together after 90 s idle: no cold penalty observed (off 376 / 383 ms vs keepalive 488 / 448 ms), so no benefit on this endpoint |
+
+**Final projection (EN, this 4-vCPU container, everything on):**
+VAD 200 + speculative STT ≈ 223 + LLM 426 + Kitten 138 ≈ **≈ 0.99 s** to the real reply's
+first audio. **≈ 220 ms** to the instant acknowledgement. Started at ≈ 2–4 s.
+Costs and risks: speculative STT spends extra compute on mid-utterance pauses,
+and a cancelled run can briefly hold the LiteRT lock.
 
 ---
 
