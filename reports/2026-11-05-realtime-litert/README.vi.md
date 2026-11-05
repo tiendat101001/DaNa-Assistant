@@ -32,7 +32,7 @@ sung giữa phiên); computer use tổng quát thay cho các trang cố định;
 4. **Tình trạng độ trễ thực tế:** bộ đo thành phần thật cho thấy **≈ 1,19 s** từ lúc
    nói đến lúc có âm thanh trả lời đầu tiên trên container 4 vCPU này (VAD 200 +
    Moonshine 423 + LLM 426 + Kitten 138), và **≈ 0,99 s** khi bật **speculative STT**
-   mới (đo được giảm 240 ms). So với ≈ 2–4 s trước đây, đây là cải thiện 2–4 lần,
+   mới (đo đầu-cuối giảm khoảng 180 ms, từ 1311 xuống 1133 ms; cộng với early commit còn 1051 ms). So với ≈ 2–4 s trước đây, đây là cải thiện 2–4 lần,
    nhưng câu trả lời chưa đạt < 0,6 s. Khi bật **phản hồi tức thì** (opt-in), người
    dùng nghe thấy DaNa sau khoảng **220 ms**. Phần còn lại khoảng 400 ms chủ yếu là
    độ trễ khứ hồi tối thiểu của LLM đám mây (khoảng 370–450 ms trên mọi mô hình

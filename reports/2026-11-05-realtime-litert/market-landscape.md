@@ -20,11 +20,11 @@ Latency class and pricing are as found; the "est." tag marks my own grading. "Ac
 
 | Product | Vietnamese support | Latency class | On-device / privacy | Can act on apps | Pricing (US list unless noted) |
 |---|---|---|---|---|---|
-| ChatGPT Advanced Voice | Unverified. No source confirms Vietnamese voice; OpenAI's "improved accents in select languages" wording does not name it | Low, realtime (est.) | Cloud only | Limited: plugins/tools in chat; no general desktop control | Plus $20/mo; free tier gets a limited preview (**verified-secondary**). Vietnam Plus price about 522,500 VND/mo with VAT, unverified blog |
+| ChatGPT Advanced Voice | Unverified. No source confirms Vietnamese voice; OpenAI's "improved accents in select languages" wording does not name it | Low, realtime (est.) | Cloud only | Limited: plugins/tools in chat; no general desktop control | Plus $20/mo; free tier gets a limited preview (**verified-secondary**). Vietnam Plus price about 522,500 VND/mo with VAT (**unverified**: <https://blog.laozhang.ai/en/posts/chatgpt-plus-price-vietnam>) |
 | Gemini Live | Not confirmed. 2024 launch list of 40+ languages does not name Vietnamese; **unverified for 2026** | Low, realtime (est.) | Cloud | Limited: connected Google apps only | Free tier includes Gemini Live (**verified-secondary**). Google AI Pro $19.99/mo US |
 | Microsoft Copilot Voice (Windows) | Yes, listed on Microsoft's supported-languages page (**verified-secondary**; exact Windows requirements unverified) | Low to medium (est.) | Cloud; Windows voice trigger ("Hey, Copilot") | Some Windows integration; limited general action | Free for consumers (est.); Microsoft 365 bundles vary |
 | Siri / Apple Intelligence | Siri Vietnamese live since iOS 18.4 (**verified-secondary**). Apple Intelligence Vietnamese reported for 2025-26 but sources conflict | Medium (est.); on-device parts are fast | Mixed: on-device where possible, Private Cloud Compute otherwise | Apple app intents only; limited third-party app control | Free with supported iPhones |
-| Alexa+ | **No**. Vietnam is not in the launch list (**verified-secondary**) | Low, cloud (est.) | Cloud | Skills and smart-home; no general desktop control | Free with Prime; about $19.99/mo otherwise (US, **verified-secondary**) |
+| Alexa+ | **No**. Vietnam is not in the launch list (**verified-secondary**) | Low, cloud (est.) | Cloud | Skills and smart-home; no general desktop control | Free with Prime; about $19.99/mo otherwise (US, **verified-secondary**: <https://subger.com/en/service/alexa-plus>) |
 | Home Assistant Assist | Weak. Only a third-party cloud-based (FPT) Vietnamese TTS component found; VI pipeline reports of problems (**unverified**) | Local, depends on STT (est.) | Fully local option | Home-automation entities only | Free / open source |
 | OpenVoiceOS (OVOS) | Not confirmed | Medium (est.); offline STT claims conflict (ToolMage says default STT is online) | Designed for privacy; offline options such as Vosk | Limited skills; no general app control | Free / open source |
 | Leon | Not confirmed; 2.0 preview on `develop` may change offline behavior | Depends on model (est.) | Self-hosted, optional offline | Limited; custom skills | Free, MIT licence (**verified-secondary**) |
@@ -72,6 +72,11 @@ Notes: Vietnamese names of products and suppliers must be read back and confirme
 ## 4. Three product bets for next quarter
 
 Each bet has a KPI with a target. Targets are **(estimate)** unless tied to the business case.
+
+Go / no-go rule (estimate): proceed to the next stage only if the KPI meets its target on the 30-task pilot. If it misses, keep the cloud fallback for that path and re-test once. Go/no-go per bet:
+- Bet 1: GO if task success is at least 80% on 30 scripted tasks with zero unsafe actions. NO-GO if below 70%, or if any unsafe action occurs.
+- Bet 2: GO if VI WER is at most 15% and p50 first audio is at most 1.0 s. NO-GO (keep cloud STT for VI) if VI WER is above 15%.
+- Bet 3: GO if unsafe actions are 0 and rework is at most 10%. NO-GO if any external send or promo submission happens without CONFIRM.
 
 | # | Bet | What we build | KPI | Target (est.) | Baseline |
 |---|---|---|---|---|---|

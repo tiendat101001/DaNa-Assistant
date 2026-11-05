@@ -153,7 +153,15 @@ class LiteRTModel:
         }
 
     def close(self) -> None:
-        self._interp = None
+        """Drop every interpreter reference so the mmapped .tflite is released
+        (Windows keeps the file locked until the interpreter is collected)."""
+        import gc
+
+        with self._lock:
+            interp, self._interp = self._interp, None
+            self._allocated = False
+            del interp
+        gc.collect()
 
 
 class ModelCache:
@@ -189,9 +197,21 @@ class ModelCache:
         resolved = str(Path(path).resolve())
         with self._lock:
             keys = [k for k in self._models if k[0] == resolved]
-            for k in keys:
-                self._models.pop(k).close()
-        return bool(keys)
+            models = [self._models.pop(k) for k in keys]
+        for m in models:
+            m.close()
+        return bool(models)
+
+    def unload_under(self, directory: str | Path) -> int:
+        """Unload every model whose file lives under ``directory`` (call before
+        deleting / re-pulling a repo). Returns how many were closed."""
+        root = Path(directory).resolve()
+        with self._lock:
+            keys = [k for k in self._models if Path(k[0]).is_relative_to(root)]
+            models = [self._models.pop(k) for k in keys]
+        for m in models:
+            m.close()
+        return len(models)
 
     def loaded(self) -> list[dict[str, Any]]:
         with self._lock:

@@ -101,3 +101,19 @@ _REAL = os.environ.get("DANA_TEST_WHISPER_TFLITE")
 def test_real_model_signatures() -> None:
     m = ModelCache().get_or_load(Path(str(_REAL)), num_threads=4)
     assert {"encode", "decode"} <= set(m.signatures())
+
+
+def test_unload_releases_interpreter(tmp_path: Path) -> None:
+    import gc
+    import weakref
+
+    c = ModelCache(interpreter_factory=FakeInterp)
+    p = _model_file(tmp_path)
+    m = c.get_or_load(p)
+    ref = weakref.ref(m._interp)
+    del m
+    assert c.unload(p) is True
+    gc.collect()
+    assert ref() is None
+    c.get_or_load(p)
+    assert c.unload_under(tmp_path) == 1 and c.loaded() == []

@@ -118,9 +118,9 @@ If the test fails with "missing key", the key is not in `.env` yet (step 2).
 | STT | speech to text (Moonshine) | about 420 ms |
 | LLM first word | the brain starts answering (Together) | about 430 ms |
 | TTS first sound | the voice starts speaking (Kitten) | about 140 ms |
-| **Total** | you stop talking to first sound | about 1.2 s |
+| **Total** | you stop talking to first sound | about 1.05 to 1.31 s, depending on the switches below |
 
-Our target is **600 ms**. Today the full answer takes about **1.0 to 1.2 s** on
+Our target is **600 ms**. Today the full answer takes about **1.05 to 1.31 s** on
 the 4-CPU test machine. That is still 2 to 4 times faster than before (2 to 4 s),
 but not yet at the target. The biggest part left is the cloud brain's network
 round trip. Your PC may be faster or slower; use **Measure latency** and the
@@ -133,7 +133,7 @@ them on after you have measured.
 
 | Switch | What it does | Effect measured |
 |---|---|---|
-| **Speculative STT** (`SPECULATIVE_STT=true`) | DaNa starts transcribing while you are still in a pause | saves about 240 ms (recommended) |
+| **Speculative STT** (`SPECULATIVE_STT=true`) | DaNa starts transcribing while you are still in a pause | saves about 180 ms end to end (1311 to 1133 ms); with early commit, 1051 ms in total (recommended) |
 | **Instant acknowledgement** (`ACK_ENABLED=true`) | DaNa says a short "Mm-hm." (EN) or "Dạ." (VI) straight away | you hear DaNa at about 220 ms; the full answer still follows about 1 s later |
 | **Keep-warm** (`keepalive_s`) | pings the LLM during a session so it does not go cold | no gain measured on Together after 90 s idle, so leave it off |
 
