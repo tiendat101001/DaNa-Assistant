@@ -102,3 +102,47 @@ def pcm_to_mel(pcm: bytes, sample_rate: int, n_mels: int = 80) -> NDArray[np.flo
     """int16 PCM bytes at any rate -> (1, n_mels, 3000) float32 model input."""
     audio = resample(pcm16_to_float(pcm), sample_rate)
     return log_mel_spectrogram(audio, n_mels)[None, ...]
+
+
+@lru_cache(maxsize=2)
+def _kaldi_mel_banks(n_mels: int, n_fft: int, low: float, high: float) -> NDArray[np.float32]:
+    def mel(f: Any) -> Any:
+        return 1127.0 * np.log(1.0 + np.asarray(f, dtype=np.float64) / 700.0)
+
+    n_bins = n_fft // 2
+    delta = (mel(high) - mel(low)) / (n_mels + 1)
+    b = np.arange(n_mels)[:, None]
+    left, center, right = (mel(low) + delta * (b + k) for k in (0.0, 1.0, 2.0))
+    m = mel(np.arange(n_bins) * (SAMPLE_RATE / n_fft))[None, :]
+    up = (m - left) / (center - left)
+    down = (right - m) / (right - center)
+    bank = np.maximum(0.0, np.minimum(up, down))
+    return np.pad(bank, ((0, 0), (0, 1))).astype(np.float32)  # Nyquist bin = 0
+
+
+def kaldi_fbank(
+    audio: NDArray[np.float32], n_mels: int = 80, *, high_freq: float = -400.0
+) -> NDArray[np.float32]:
+    """``torchaudio.compliance.kaldi.fbank`` (dither=0, snip_edges=False) in numpy.
+
+    Audio is 16 kHz float in [-1, 1]. Returns ``(frames, n_mels)`` log-fbank.
+    """
+    x = np.asarray(audio, dtype=np.float64)
+    win, shift, n_fft = 400, 160, 512
+    n_frames = (x.size + shift // 2) // shift
+    if n_frames == 0:
+        return np.zeros((0, n_mels), dtype=np.float32)
+    start = -(win - shift) // 2  # -120
+    need_left = -start
+    need_right = max(0, (n_frames - 1) * shift + start + win - x.size)
+    padded = np.pad(x, (need_left, need_right), mode="reflect" if x.size > 1 else "edge")
+    idx = np.arange(win)[None, :] + shift * np.arange(n_frames)[:, None]
+    frames = padded[idx]
+    frames = frames - frames.mean(axis=1, keepdims=True)
+    prev = np.concatenate([frames[:, :1], frames[:, :-1]], axis=1)
+    frames = frames - 0.97 * prev
+    window = np.power(0.5 - 0.5 * np.cos(2 * np.pi * np.arange(win) / (win - 1)), 0.85)
+    spec = np.abs(np.fft.rfft(frames * window, n=n_fft, axis=1)) ** 2
+    hi = SAMPLE_RATE / 2 + high_freq if high_freq <= 0 else high_freq
+    mel = spec @ _kaldi_mel_banks(n_mels, n_fft, 20.0, hi).T
+    return np.log(np.maximum(mel, np.finfo(np.float32).eps)).astype(np.float32)

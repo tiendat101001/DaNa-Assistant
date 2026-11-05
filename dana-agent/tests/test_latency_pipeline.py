@@ -423,3 +423,64 @@ async def test_keepalive_loop_pings_and_cancels() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert n["c"] >= 2
+
+
+async def _commit_run(stt: FakeSTT, frames: list[Any], commit_ms: int) -> tuple[list[Any], Any]:
+    proc = ProviderSTTProcessor(stt, speculative=True, early_commit_ms=commit_ms)  # type: ignore[arg-type]
+    out: list[Any] = []
+
+    async def capture(frame: Any, direction: Any = D) -> None:
+        out.append(frame)
+
+    proc.push_frame = capture
+    for f in frames:
+        await proc.process_frame(f, D)
+        for _ in range(3):
+            await asyncio.sleep(0)
+    await proc.wait_idle()
+    return out, proc
+
+
+async def test_early_commit_emits_before_vad_stop_and_ignores_stop() -> None:
+    stt = FakeSTT()
+    frames: list[Any] = [VADUserStartedSpeakingFrame(), _loud()]
+    frames += [_quiet(40) for _ in range(5)]  # 200 ms silence, VAD stop not yet sent
+    out, proc = await _commit_run(stt, frames, commit_ms=120)
+    assert [f.text for f in out if type(f) is TranscriptionFrame] == ["xin chào"]
+    # the later VAD stop must not re-run STT or emit a second transcript
+    out2 = []
+
+    async def cap(frame: Any, direction: Any = D) -> None:
+        out2.append(frame)
+
+    proc.push_frame = cap
+    await proc.process_frame(VADUserStoppedSpeakingFrame(), D)
+    await proc.wait_idle()
+    assert len(stt.calls) == 1
+    assert not [f for f in out2 if isinstance(f, TranscriptionFrame)]
+
+
+async def test_early_commit_off_waits_for_vad_stop() -> None:
+    stt = FakeSTT()
+    frames: list[Any] = [VADUserStartedSpeakingFrame(), _loud()]
+    frames += [_quiet(40) for _ in range(5)]
+    out, _ = await _commit_run(stt, frames, commit_ms=0)
+    assert not [f for f in out if type(f) is TranscriptionFrame]
+
+
+async def test_early_commit_resume_is_new_turn() -> None:
+    stt = FakeSTT()
+    frames: list[Any] = [VADUserStartedSpeakingFrame(), _loud()]
+    frames += [_quiet(40) for _ in range(5)]
+    frames += [VADUserStoppedSpeakingFrame(), VADUserStartedSpeakingFrame(), _loud()]
+    frames += [VADUserStoppedSpeakingFrame()]
+    out, _ = await _commit_run(stt, frames, commit_ms=120)
+    assert len([f for f in out if type(f) is TranscriptionFrame]) == 2
+    assert len(stt.calls) == 2
+
+
+async def test_early_commit_not_before_silence_threshold() -> None:
+    stt = FakeSTT()
+    frames: list[Any] = [VADUserStartedSpeakingFrame(), _loud(), _quiet(40), _quiet(40)]  # 80 ms
+    out, _ = await _commit_run(stt, frames, commit_ms=120)
+    assert not [f for f in out if type(f) is TranscriptionFrame]

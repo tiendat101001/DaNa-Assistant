@@ -116,6 +116,7 @@ def _build_stt_service(
         sample_rate=_STT_SAMPLE_RATE,
         clock=clock,
         speculative=cfg.conversation.latency.speculative_stt,
+        early_commit_ms=cfg.conversation.latency.early_commit_ms,
     )
 
 

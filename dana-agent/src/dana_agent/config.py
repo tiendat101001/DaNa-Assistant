@@ -138,6 +138,11 @@ class LatencyConfig(BaseModel):
     # Speculative STT: start transcribing as soon as ~60 ms of silence follows
     # speech, reuse the result if the VAD then confirms end-of-speech.
     speculative_stt: bool = False
+    # With speculative_stt: once the speculative transcript is ready and silence
+    # has lasted >= this many ms, emit the final transcript immediately instead
+    # of waiting for the VAD stop. Speech resuming afterwards is a NEW turn
+    # (the first part has already been sent to the brain). 0 = off.
+    early_commit_ms: int = Field(default=0, ge=0)
     ack_enabled: bool = False
     ack_phrases: dict[str, str] = Field(default_factory=lambda: {"en": "Mm-hm.", "vi": "Dạ."})
 

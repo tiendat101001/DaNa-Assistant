@@ -26,7 +26,7 @@ from dana_agent.config import STTConfig
 from dana_agent.observability import get_logger
 from dana_agent.providers.base import Capabilities, STTProvider
 from dana_agent.providers.registry import register
-from dana_agent.runtime.audio import SAMPLE_RATE, pcm_to_mel, resample
+from dana_agent.runtime.audio import SAMPLE_RATE, kaldi_fbank, pcm_to_mel, resample
 from dana_agent.runtime.litert import MODEL_CACHE, LiteRTModel
 from dana_agent.runtime.whisper_tokenizer import (
     SentencePieceDecoder,
@@ -110,6 +110,33 @@ def _kind(name: str, det: dict[str, Any]) -> str:
     return "other"
 
 
+def _load_ctc_vocab(model_dir: Path) -> list[str]:
+    """``tokens.txt``: ``token id`` lines (icefall) or one token per line (index order)."""
+    f = model_dir / "tokens.txt"
+    if not f.is_file():
+        raise FileNotFoundError(f"CTC model needs tokens.txt next to the .tflite ({model_dir})")
+    lines = f.read_text("utf-8").splitlines()
+    pairs = [ln.rsplit(" ", 1) for ln in lines]
+    if all(len(p) == 2 and p[1].isdigit() for p in pairs):
+        out = [""] * (max(int(p[1]) for p in pairs) + 1)
+        for tok, i in pairs:
+            out[int(i)] = tok
+        return out
+    return lines
+
+
+def _ctc_collapse(ids: Any, vocab: list[str]) -> str:
+    out: list[str] = []
+    prev = -1
+    for i in (int(x) for x in ids):
+        if i != prev and i != 0 and i < len(vocab):
+            t = vocab[i]
+            if not (t.startswith("<") and t.endswith(">") and len(t) > 2):
+                out.append(t)
+        prev = i
+    return "".join(out).replace("\u2581", " ").replace("|", " ").strip()
+
+
 def _truncate_repeats(ids: list[int], max_run: int = 4) -> list[int]:
     """Collapse degenerate trailing repetition (n-gram loops) to one occurrence."""
     for n in (1, 2, 3, 4):
@@ -123,6 +150,13 @@ def _truncate_repeats(ids: list[int], max_run: int = 4) -> list[int]:
         ):
             del ids[-n * (reps - 1) :]
     return ids
+
+
+class _NullTokenizer(SentencePieceDecoder):
+    """Placeholder for CTC models (vocab comes from tokens.txt)."""
+
+    def __init__(self) -> None:
+        super().__init__({})
 
 
 @register("stt", "litert")
@@ -140,6 +174,7 @@ class LiteRTWhisperSTT(STTProvider):
         self._tok = tokenizer
         self._model = model
         self._lock = threading.Lock()
+        self._ctc_vocab_cache: list[str] | None = None
 
     @property
     def capabilities(self) -> Capabilities:
@@ -159,7 +194,10 @@ class LiteRTWhisperSTT(STTProvider):
                     path, backend=self._cfg.backend, num_threads=self._cfg.num_threads
                 )
             if self._tok is None:
-                self._tok = self._load_tokenizer(self._model.path.parent)
+                if (self._model.path.parent / "tokens.txt").is_file():
+                    self._tok = _NullTokenizer()
+                else:
+                    self._tok = self._load_tokenizer(self._model.path.parent)
             return self._model, self._tok
 
     def _load_tokenizer(self, model_dir: Path) -> WhisperTokenizer | SentencePieceDecoder:
@@ -214,6 +252,9 @@ class LiteRTWhisperSTT(STTProvider):
                 log.debug("stt_litert_silence_skipped")
                 return ""
         model, tok = self._ensure_loaded()
+        ctc = self._ctc_kind(model)
+        if ctc is not None:
+            return self._run_ctc(model, ctc, audio16k)
         shape = self._enc_input_shape(model)
         sigs = model.signatures()
         enc = [s for s in sigs if "encode" in s.lower()]
@@ -241,6 +282,80 @@ class LiteRTWhisperSTT(STTProvider):
         else:
             ids = self._run_generate(model, mel, next(iter(sigs), None))
         return tok.decode(ids)
+
+    @staticmethod
+    def _ctc_kind(model: LiteRTModel) -> str | None:
+        """'fbank' (icefall Zipformer: [1,T,80] + mask biases), 'raw' (wav2vec2)."""
+        sigs = model.signatures()
+        if any("decode" in s.lower() for s in sigs):
+            return None
+        try:
+            ins = [tuple(int(x) for x in d["shape"]) for d in model.input_details()]
+            outs = [tuple(int(x) for x in d["shape"]) for d in model.output_details()]
+        except Exception:  # noqa: BLE001
+            return None
+        if len(outs) != 1 or len(outs[0]) != 3:
+            return None
+        if any(len(s) == 3 and s[2] == 80 for s in ins) and len(ins) > 1:
+            return "fbank"
+        if (
+            len(ins) == 1
+            and len(ins[0]) == 2
+            and ins[0][1] >= 16000
+            and "frontend" in model.path.name
+        ):
+            return "raw"
+        return None
+
+    def _ctc_vocab(self, model: LiteRTModel) -> list[str]:
+        if self._ctc_vocab_cache is None:
+            self._ctc_vocab_cache = _load_ctc_vocab(model.path.parent)
+        return self._ctc_vocab_cache
+
+    def _run_ctc(self, model: LiteRTModel, kind: str, audio: np.ndarray[Any, Any]) -> str:
+        vocab = self._ctc_vocab(model)
+        details = model.input_details()
+        texts: list[str] = []
+        if kind == "fbank":
+            fb_shape = next(d["shape"] for d in details if len(d["shape"]) == 3)
+            win_frames = int(fb_shape[1])
+            win = win_frames * 160
+            for st in range(0, max(audio.size, 1), win):
+                piece = audio[st : st + win]
+                feats = kaldi_fbank(piece)[:win_frames]
+                t = feats.shape[0]
+                x: np.ndarray[Any, Any] = np.full((win_frames, 80), np.log(1e-10), dtype=np.float32)
+                x[:t] = feats
+                valid = max(0, (t - 7) // 2)
+                n50 = max(int(d["shape"][1]) for d in details if len(d["shape"]) == 2)
+                bias: np.ndarray[Any, Any] = np.full((1, n50), -1000.0, dtype=np.float32)
+                bias[0, :valid] = 0.0
+                feeds: list[np.ndarray[Any, Any]] = []
+                for d in details:
+                    sh = tuple(int(v) for v in d["shape"])
+                    if len(sh) == 3:
+                        feeds.append(x[None])
+                    else:
+                        feeds.append(np.ascontiguousarray(bias[:, :: n50 // sh[1]][:, : sh[1]]))
+                logits = model.invoke_default(feeds)[0][0]
+                texts.append(_ctc_collapse(logits[: (valid + 1) // 2].argmax(-1), vocab))
+        else:  # raw: wav2vec2 frontend -> head chain
+            head_path = model.path.with_name(model.path.name.replace("frontend", "head"))
+            head = MODEL_CACHE.get_or_load(
+                head_path, backend=model.backend, num_threads=model.num_threads
+            )
+            win = int(details[0]["shape"][1])
+            for st in range(0, max(audio.size, 1), win):
+                piece = audio[st : st + win]
+                x = np.zeros((1, win), dtype=np.float32)
+                x[0, : piece.size] = piece
+                feat = model.invoke_default([x])[0]
+                logits = head.invoke_default([feat])[0][0]
+                n = piece.size
+                for k, sd in [(10, 5), (3, 2), (3, 2), (3, 2), (3, 2), (2, 2), (2, 2)]:
+                    n = (n - k) // sd + 1
+                texts.append(_ctc_collapse(logits[: max(n, 0)].argmax(-1), vocab))
+        return " ".join(t for t in texts if t).strip()
 
     @staticmethod
     def _run_generate(model: LiteRTModel, mel: np.ndarray, sig: str | None) -> list[int]:

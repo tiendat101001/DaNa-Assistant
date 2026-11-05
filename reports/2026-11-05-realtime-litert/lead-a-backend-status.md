@@ -46,3 +46,12 @@ Offline suite 566 passed, 4 skipped, 58 live deselected; ruff check/format clean
 - `latency.speculative_stt` (False): transcribes at 60 ms silence onset, reuse on VAD stop, cancel on resume. Real Moonshine, VAD stop -> transcript: normal 498/380/442 ms vs speculative 196/224/200 ms (~240 ms saved). Tests: 7 new (reuse, cancel, disabled, error, keepalive ping/failure/loop). session.py wiring is not unit-tested.
 - Projection with both on: ~987 ms (still over 600 ms).
 Final gate: see lead's report.
+
+### 4. Real E2E (scripts/e2e_latency.py; last speech frame -> first TTS audio, median of 3 warm)
+| case | total | STT after VAD stop | LLM TTFT | TTS |
+|---|---|---|---|---|
+| (i) Moonshine | 1311 | 365 | 479 | 277 |
+| (ii) Moonshine + speculative | 1133 | 168 | 460 | 295 |
+| (iii-M) + early_commit 120 | 1051 | 157 | 442 | 259 |
+| (iii) Zipformer-small CTC + spec + commit | 1462 (box contended) | 292 | 460 | 471 |
+CTC (C2): zipformer small 397 ms flat (fixed 16 s window), wav2vec2 1261 ms; neither beats Moonshine. 600 ms goal NOT met: LLM TTFT (~450) + TTS (~260-290) alone ~ 700-750 ms.

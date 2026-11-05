@@ -675,6 +675,7 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
         max_utterance_s: float = _MAX_UTTERANCE_S,
         clock: TurnClock | None = None,
         speculative: bool = False,
+        early_commit_ms: int = 0,
         onset_ms: int = _SPEC_ONSET_MS,
         speech_rms: float = _SPEC_SPEECH_RMS,
         **kwargs: object,
@@ -686,6 +687,7 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
         self._speculative = speculative
         self._onset_bytes = int(onset_ms / 1000 * sample_rate) * 2
         self._speech_rms = speech_rms
+        self._commit_bytes = int(early_commit_ms / 1000 * sample_rate) * 2
         self._low_bytes = 0
         self._spec_task: asyncio.Task[list[Transcript]] | None = None
         self._preroll_bytes = int(preroll_s * sample_rate) * 2
@@ -761,6 +763,25 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
         if self._spec_task is None and self._low_bytes >= self._onset_bytes and self._utterance:
             snapshot = list(self._utterance)
             self._spec_task = asyncio.ensure_future(self._collect(snapshot))
+        elif (
+            self._commit_bytes > 0
+            and self._spec_task is not None
+            and self._spec_task.done()
+            and not self._spec_task.cancelled()
+            and self._spec_task.exception() is None
+            and self._low_bytes >= self._commit_bytes
+            and self._utterance
+        ):
+            # Early commit: emit now. Clearing the utterance makes the later VAD
+            # stop a no-op; renewed speech starts a fresh turn (documented).
+            frames, self._utterance = self._utterance, None
+            spec, self._spec_task = self._spec_task, None
+            log.info(
+                "stt_early_commit", silence_ms=self._low_bytes * 1000 // (self._sample_rate * 2)
+            )
+            task = asyncio.ensure_future(self._transcribe(frames, spec))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
 
     async def _collect(self, frames: list[InputAudioRawFrame]) -> list[Transcript]:
         return [tr async for tr in self._provider.stream(self._audio_iter(frames))]

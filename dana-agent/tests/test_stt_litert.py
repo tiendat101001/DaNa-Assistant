@@ -267,3 +267,55 @@ async def test_real_moonshine() -> None:
             frame = AudioFrame(w.readframes(w.getnframes()), w.getframerate())
         res = await collect(stt.stream(async_iter([frame])))
         assert "weather" in res[0].text.lower()
+
+
+def test_ctc_vocab_and_collapse(tmp_path: Path) -> None:
+    from dana_agent.providers.stt.litert import _ctc_collapse, _load_ctc_vocab
+
+    (tmp_path / "tokens.txt").write_text("<blk> 0\n<sos/eos> 1\n▁HI 2\nA 3\n", "utf-8")
+    v = _load_ctc_vocab(tmp_path)
+    assert v[2] == "▁HI"
+    assert _ctc_collapse([0, 2, 2, 0, 3, 3, 1], v) == "HI A".replace(" A", "A")
+    (tmp_path / "tokens.txt").write_text("<pad>\n<s>\n</s>\n<unk>\n|\nE\nT\n", "utf-8")
+    v = _load_ctc_vocab(tmp_path)
+    assert _ctc_collapse([5, 5, 4, 6, 0, 6], v) == "E TT"
+
+
+def test_kaldi_fbank_shape_and_determinism() -> None:
+    from dana_agent.runtime.audio import kaldi_fbank
+
+    a = (0.3 * np.sin(np.arange(16000) / 7.0)).astype(np.float32)
+    f = kaldi_fbank(a)
+    assert f.shape == (100, 80) and np.isfinite(f).all()
+    assert np.array_equal(f, kaldi_fbank(a))
+    assert kaldi_fbank(np.zeros(0, np.float32)).shape == (0, 80)
+
+
+async def test_ctc_fbank_strategy(tmp_path: Path) -> None:
+    (tmp_path / "tokens.txt").write_text("<blk> 0\n<sos/eos> 1\n<unk> 2\n▁HI 3\n", "utf-8")
+
+    class CtcModel(FakeModel):
+        path = tmp_path / "m.tflite"
+
+        def input_details(self) -> list[dict[str, Any]]:
+            return [
+                {"shape": [1, 160, 80], "dtype": np.float32},
+                {"shape": [1, 78], "dtype": np.float32},
+                {"shape": [1, 39], "dtype": np.float32},
+            ]
+
+        def output_details(self) -> list[dict[str, Any]]:
+            return [{"shape": [1, 39, 4], "dtype": np.float32}]
+
+        def invoke_default(self, inputs: list[np.ndarray]) -> list[np.ndarray]:
+            assert inputs[0].shape == (1, 160, 80) and inputs[2].shape == (1, 39)
+            out: Any = np.zeros((1, 39, 4), np.float32)
+            out[0, :, 0] = 1.0
+            out[0, 3:5, 3] = 5.0
+            return [out]
+
+    stt = LiteRTWhisperSTT(STTConfig(provider="litert"), model=CtcModel({}, {}))  # type: ignore[arg-type]
+    t = np.arange(16000) / 7.0
+    pcm = (0.3 * 32767 * np.sin(t)).astype("<i2").tobytes()
+    out = await collect(stt.stream(async_iter([AudioFrame(pcm, 16000)])))
+    assert out[0].text == "HI"
