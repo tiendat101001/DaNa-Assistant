@@ -252,6 +252,16 @@ keeps measuring the *real* reply, so the metric stays honest. **Perceived first
 audio ≈ 220 ms** (200 ms VAD stop + one 20 ms frame). The real reply still lands
 at ≈ 1.2 s with Moonshine on this container. Covered by `tests/test_latency_ack.py`.
 
+**UI probe vs direct (Team Lead B).** "Measure latency" first showed 1.3–1.4 s,
+because the UI sent only `{provider, model, base_url}` and dropped the preset's
+`reasoning.enabled=false` and `max_tokens`. After the fix, the probe sends the
+full preset and runs twice, reporting **warm 368 ms** (desktop) / 394 ms (phone)
+and **cold 1,133 ms**. With the minimal body, warm is ≈ 470–540 ms, so hidden
+reasoning costs ≈ 100–150 ms. The cold ≈ +750 ms is **connection setup**
+(TLS/proxy), and it recurs after any idle gap longer than the HTTP keep-alive
+window. That is why session warm-up and a connection keep-warm matter as much as
+model choice (§5.3 #8).
+
 ### 5.3 Closing the remaining gap (ranked by ms saved per effort)
 | # | Lever | Expected saving | Effort | Notes |
 |---|---|---|---|---|
@@ -262,6 +272,7 @@ at ≈ 1.2 s with Moonshine on this container. Covered by `tests/test_latency_ac
 | 5 | **Smaller first clause** (`tts_first_chunk_min_chars` 12–15) | −50…−100 ms | XS | Kitten costs ≈ 7 ms/char |
 | 6 | **Vietnamese ASR**: whisper-tiny has a static 128-token decoder (≈ 65 ms/token). Options: a `Qwen3-ASR-0.6B` LiteRT trial, or a cloud streaming STT for VI only | −500 ms+ (VI) | M | per-language STT routing is a config change |
 | 7 | Hardware: the container has 4 vCPU; a desktop CPU with 8+ performance cores | −20…−40 % compute | — | set `num_threads` = physical cores |
+| 8 | **Connection keep-warm** during sessions: the first turn after an idle gap otherwise re-pays ≈ 750 ms of connection setup | −750 ms on post-pause turns | S | see the final sprint results below |
 
 ---
 
