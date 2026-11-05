@@ -10,3 +10,11 @@
 | Computer use real check (BrowserActions + ActionGate) | C6 | PASS | fill ALLOW/REVERSIBLE; Search ALLOW; Delete account CONFIRM/DESTRUCTIVE; external link REFUSE/OUT_OF_SCOPE; Delete not executed |
 | MCP real stdio check | C5 | PASS after fix | mcp 2.x snake_case hints bug fixed by C5: read-only ALLOW, destructive CONFIRM, unannotated CONFIRM, unknown REFUSE |
 | Docs: .env.example + README section | Lead B | DONE | no secrets |
+
+## Review & QA round
+| Finding | Sev | Owner | Status |
+|---|---|---|---|
+| QA1: unknown repo -> 403 "gated" instead of 404 (anonymous HF 401 ambiguous) | medium | C1 | routed, fixing |
+
+## Deferred
+(none yet)

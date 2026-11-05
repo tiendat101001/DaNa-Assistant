@@ -147,8 +147,7 @@ Vietnamese needs two different models from English:
   **Piper**. The engineer must download a **vi_VN Piper voice** file first
   (it is not included with DaNa). Then set the TTS provider to **piper**.
 
-Ask the engineer to set the Vietnamese language in `.env`. Expect Vietnamese
-answers to be slower than English.
+The engineer sets the Vietnamese values in `.env`. Expect Vietnamese to be slower.
 
 ## 12. Computer use: ask DaNa to act on a website
 
@@ -190,8 +189,7 @@ file and restart DaNa. A copied key with an extra line break will also fail.
 The Piper vi_VN voice file has not been downloaded yet. Ask the engineer.
 
 **Windows notes.**
-- Run commands in PowerShell or the Command Prompt from the `DaNa-Assistant` folder.
-- Keep the window that runs `--control` open while you use DaNa.
+- Run commands in PowerShell from the `DaNa-Assistant` folder; keep that window open.
 - SGLang (the local GPU brain) needs Linux or WSL2 with an NVIDIA GPU. The
   cloud presets (Together, Gemini, OpenAI) work on Windows directly.
 - Windows app control (clicking desktop apps) has been tested only with

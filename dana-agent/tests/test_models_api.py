@@ -43,6 +43,8 @@ def handler(request: httpx.Request) -> httpx.Response:
         )
     if "gated" in p:
         return httpx.Response(403)
+    if p.endswith("/zzz-nope"):
+        return httpx.Response(401)  # anonymous HF: nonexistent looks like 401
     if p.endswith("/missing"):
         return httpx.Response(404)
     if p == "/api/models/litert-community/whisper-tiny":
@@ -169,3 +171,11 @@ def test_pull_errors_and_job_404(ctx: Any) -> None:
     assert c.get("/api/v1/models/jobs/nope", headers=AUTH).status_code == 404
     assert c.delete("/api/v1/models/jobs/nope", headers=AUTH).status_code == 404
     assert c.post("/api/v1/models/load", headers=AUTH, json={"repo_id": "a/b"}).status_code == 404
+
+
+def test_nonexistent_repo_is_404_not_gated(ctx: Any) -> None:
+    c = ctx[0]
+    r = c.get("/api/v1/models/hub/litert-community/zzz-nope", headers=AUTH)
+    assert r.status_code == 404
+    r = c.post("/api/v1/models/pull", headers=AUTH, json={"repo_id": "litert-community/zzz-nope"})
+    assert r.status_code == 404

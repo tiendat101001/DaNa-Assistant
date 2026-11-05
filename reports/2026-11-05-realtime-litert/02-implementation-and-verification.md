@@ -84,6 +84,7 @@ which renders `/api/v1/config/schema`.
 | `conversation.latency.warmup_on_start` | true | warm STT/TTS/LLM before the first turn |
 | `conversation.latency.speculative_stt` | false | start STT after 60 ms of silence and reuse it at VAD stop (measured −240 ms) |
 | `conversation.latency.ack_enabled` / `ack_phrases` | false / `{"en":"Mm-hm.","vi":"Dạ."}` | instant acknowledgement at end-of-speech (perceived ≈ 220 ms) |
+| `conversation.latency.early_commit_ms` | 0 (off) | with speculative STT: commit the turn after N ms of silence without waiting for VAD stop |
 | `conversation.latency.keepalive_s` | 0 (off) | token-free `models.list()` ping to keep the LLM connection warm during sessions |
 | `conversation.stt.provider` | — | `litert` \| `faster_whisper` \| `assemblyai` \| `deepgram` |
 | `conversation.stt.model` | — | e.g. `litert-community/moonshine-tiny` (EN) or `litert-community/whisper-tiny` (VI) |
@@ -294,6 +295,32 @@ real reply can only beat 600 ms if speech recognition + turn commit fits in
 transcript (§5.5). On a machine with a local NVIDIA GPU, an SGLang
 Qwen2.5-1.5B removes most of the LLM leg (TTFT tens of ms, *estimate*), which
 makes the budget comfortable.
+
+### 5.5 TRUE end-to-end measurement (supersedes the summed projections)
+`dana-agent/scripts/e2e_latency.py` feeds the real wav as 20 ms frames, with VAD
+stop 200 ms after the last speech frame. It runs the **real processors**:
+`ProviderSTTProcessor` (LiteRT) → `BrainProcessor` (real Brain, Together
+DeepSeek-V4.1-Flash, reasoning off, 26 tools bound) → `ProviderTTSProcessor`
+(LiteRT KittenTTS, first chunk 16 chars). It measures **last speech frame →
+first reply audio**, median of 3 warm runs.
+
+| Case | **E2E** | STT (from last speech) | LLM TTFT | first token → first audio |
+|---|---|---|---|---|
+| (i) Moonshine-tiny | **1,311 ms** | 568 | 479 | 277 |
+| (ii) Moonshine + speculative STT | **1,133 ms** | 377 | 460 | 295 |
+| (iii) Moonshine + speculative + early commit 120 ms | **1,051 ms** | 362 | 442 | 259 |
+| (iv) Zipformer-small CTC + speculative + early commit | 1,704 ms | 458 | 505 | 408 |
+
+Findings:
+- **LLM + TTS alone ≈ 700 ms.** That is TTFT ≈ 440–480 ms, plus ≈ 260–300 ms
+  until the first 16-character clause has streamed and been synthesised. So
+  **the real reply cannot reach < 600 ms in this environment even with zero STT
+  time.** This was measured, not projected.
+- The litert-community CTC exports pad to a fixed **16 s** window. Zipformer-small
+  costs ≈ 400 ms flat and wav2vec2 ≈ 1.1–1.3 s, so they are no faster than
+  Moonshine for short commands. The CTC strategy still ships (it works, with
+  tests), but it is not recommended for latency.
+- **Best measured configuration: (iii) ≈ 1.05 s**, vs ≈ 2–4 s before this work.
 
 ### 5.4 Final sprint (shipped, opt-in, tested)
 | Feature | Mechanism | Measured |

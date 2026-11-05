@@ -340,10 +340,26 @@ class HubClient:
             models = [m for m in models if m["task"] == task]
         return HubListing([dict(m) for m in models[:limit]], fetched, cached)
 
+    async def _raise_gated_or_missing(self, repo_id: str) -> None:
+        """Anonymous HF answers 401 for nonexistent repos too: only report
+        "gated" when the repo is known to exist (in the author's listing)."""
+        if self.auth_headers():
+            return  # token sent: 401/403 really is an access problem
+        try:
+            listing = await self.list_models(search=repo_id.split("/", 1)[1], limit=1000)
+        except (HubUnavailableError, HubAuthError):
+            return
+        if repo_id not in {m["id"] for m in listing.models}:
+            raise ModelNotFoundError(f"model {repo_id!r} not found on the hub")
+
     async def model_detail(self, repo_id: str, revision: str = "main") -> dict[str, Any]:
         validate_repo_id(repo_id)
         async with self._client() as client:
-            meta_resp = await self._get(client, f"{self.endpoint}/api/models/{repo_id}")
+            try:
+                meta_resp = await self._get(client, f"{self.endpoint}/api/models/{repo_id}")
+            except HubAuthError:
+                await self._raise_gated_or_missing(repo_id)
+                raise
             meta = meta_resp.json()
             tree = await self._get_json_pages(
                 client,
