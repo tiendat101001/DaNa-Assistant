@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from structlog.stdlib import BoundLogger
 
 from dana_agent.app import build_stack
-from dana_agent.config import get_settings
+from dana_agent.config import CONFIG_OVERRIDES_PATH, get_settings
 from dana_agent.conversation import ConversationSession
 from dana_agent.errors import ConfigError
 from dana_agent.observability import configure_logging, get_logger
@@ -146,7 +146,13 @@ async def _run_with_control(
     from dana_agent.control.server import ControlServer  # noqa: PLC0415
 
     bus = EventBus()
-    controller = AgentController(cfg, stack, bus, bypass_wake_gate=bypass_wake)
+    controller = AgentController(
+        cfg,
+        stack,
+        bus,
+        bypass_wake_gate=bypass_wake,
+        overrides_path=CONFIG_OVERRIDES_PATH,  # "Use as ASR/TTS" survives restarts
+    )
     token = load_or_create_token(cfg.control.token_path)
     app = create_control_app(cfg, controller, bus, control_token=token)
     server = ControlServer(app, cfg.control)

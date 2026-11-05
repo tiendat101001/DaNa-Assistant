@@ -12,10 +12,13 @@ confirmations awaiting a UI decision.
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dana_agent.brain.events import ConfirmationRequired, TurnComplete
@@ -157,8 +160,12 @@ class AgentController(Controller):
         *,
         bypass_wake_gate: bool = False,
         now: Callable[[], float] = time.monotonic,
+        overrides_path: str | Path | None = None,
     ) -> None:
         self._cfg = cfg
+        # Where restart-required changes are persisted (None = don't persist,
+        # e.g. in tests). The real agent passes config.CONFIG_OVERRIDES_PATH.
+        self._overrides_path = Path(overrides_path) if overrides_path else None
         self._stack = stack
         self._bus = bus
         self._bypass_wake_gate = bypass_wake_gate
@@ -332,6 +339,9 @@ class AgentController(Controller):
             if change.status is ChangeStatus.APPLIED:
                 set_path(self._cfg, change.path, get_path(new_config, change.path))
                 self._hot_side_effect(change.path)
+        pending = [c.path for c in changes if c.status is ChangeStatus.RESTART_REQUIRED]
+        if pending and self._overrides_path is not None:
+            persist_overrides(self._overrides_path, new_config, pending)
         if changes:
             self._bus.publish(EventType.CONFIG_CHANGED, {"changes": [c.to_json() for c in changes]})
         return changes
@@ -370,3 +380,46 @@ def _preview(tool: str, arguments: dict[str, Any]) -> str:
     safe = redact_arguments(arguments)
     arg_str = ", ".join(f"{k}={v!r}" for k, v in safe.items())
     return f"{tool}({arg_str})"
+
+
+# Secrets are never written to the overrides file (they live in .env / keyring).
+_SECRET_LEAVES = ("api_key", "hf_token", "token")
+
+
+def persist_overrides(path: Path, new_config: AppConfig, paths: list[str]) -> None:
+    """Merge restart-required values into the JSON overrides file that
+    ``AppConfig`` loads at startup (atomic write; secrets skipped)."""
+    dumped = new_config.model_dump(mode="json")
+    try:
+        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    saved: list[str] = []
+    for dotted in paths:
+        parts = dotted.split(".")
+        if parts[-1] in _SECRET_LEAVES:
+            continue
+        value: Any = dumped
+        for p in parts:
+            if not isinstance(value, dict) or p not in value:
+                break
+            value = value[p]
+        else:
+            node = data
+            for p in parts[:-1]:
+                child = node.get(p)
+                if not isinstance(child, dict):
+                    child = {}
+                    node[p] = child
+                node = child
+            node[parts[-1]] = value
+            saved.append(dotted)
+    if not saved:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+    log.info("config_overrides_saved", path=str(path), fields=saved)

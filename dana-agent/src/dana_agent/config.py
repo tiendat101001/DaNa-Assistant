@@ -21,6 +21,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
+    JsonConfigSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -29,6 +30,11 @@ from pydantic_settings import (
 from dana_agent.secrets import resolve_secret
 
 Language = Literal["en", "vi"]
+
+# Restart-required choices made in the UI (e.g. Models -> "Use as ASR", an LLM
+# preset's provider) are saved here by the control plane and loaded at startup.
+# Lives under .dana/ (gitignored). Never holds secrets.
+CONFIG_OVERRIDES_PATH = ".dana/config-overrides.json"
 
 
 # --- per-capability provider configs -------------------------------------
@@ -338,6 +344,7 @@ class AppConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         toml_file="dana.toml",
+        json_file=CONFIG_OVERRIDES_PATH,
         # "ignore" (not "forbid") because pydantic-settings v2.3+ also passes
         # standard vendor env vars (ASSEMBLYAI_API_KEY, GEMINI_API_KEY, …) through
         # to pydantic as extra fields.  Those are intentional and handled by the
@@ -461,12 +468,15 @@ class AppConfig(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Highest priority first: explicit init kwargs (tests) > env > .env >
-        # dana.toml > file secrets/defaults. This is the env > file > defaults
-        # precedence the brief requires.
+        # Highest priority first: explicit init kwargs (tests) > process env >
+        # UI-saved overrides (.dana/config-overrides.json) > .env > dana.toml >
+        # file secrets/defaults. Saved UI choices sit above the .env *file* so a
+        # copied .env.example can't silently undo "Use as ASR"; a variable set
+        # in the real shell environment still wins over everything.
         return (
             init_settings,
             env_settings,
+            JsonConfigSettingsSource(settings_cls),
             dotenv_settings,
             TomlConfigSettingsSource(settings_cls),
             file_secret_settings,
