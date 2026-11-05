@@ -25,11 +25,13 @@ plug-and-play computer use instead of hard-coded sites, and a mobile plan.
    A sweep of all 20 serverless Together models available to this key confirmed
    it is the fastest one with good Vietnamese. SGLang, vLLM, OpenAI, Gemini and
    Together are one-click presets with a live "Measure latency" probe.
-4. **Honest latency status:** the measured real-component bench gives
-   **≈ 1.19 s** voice → first *reply* audio on this 4-vCPU container (VAD 200 +
-   Moonshine 423 + LLM 426 + Kitten 138), and **≈ 0.99 s** with the new
-   **speculative STT** (measured −240 ms). That compares with ≈ 2–4 s before, a
-   2–4× improvement, but the reply is not yet < 0.6 s. With the opt-in **instant
+4. **Honest latency status — measured end to end through the real processors**
+   (`scripts/e2e_latency.py`, last speech frame → first *reply* audio): **1,311 ms**
+   plain Moonshine, **1,133 ms** with speculative STT (−180 ms end to end; −240 ms
+   at the STT stage), and **1,051 ms** with early commit, vs ≈ 2–4 s before. That
+   is a 2–4× improvement, but the reply is **not < 0.6 s**: LLM + TTS alone measure
+   ≈ 700 ms in this container (cloud TTFT ≈ 450 ms incl. ≈ 200 ms network + ≈ 260 ms
+   to stream and synthesise the first clause), so no STT change can close it here. With the opt-in **instant
    acknowledgement**, the user hears DaNa at **≈ 220 ms**. The remaining ≈ 400 ms
    is mostly the cloud LLM's round-trip floor (≈ 370–450 ms on every serverless
    Together model). The levers that remain are a local GPU LLM via SGLang

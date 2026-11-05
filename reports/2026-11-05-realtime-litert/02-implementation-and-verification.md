@@ -328,9 +328,10 @@ Findings:
 | **Speculative STT** (`speculative_stt`) | per-frame RMS in `ProviderSTTProcessor`; after 60 ms of low energy, transcribe the buffered audio in the background; cancel if speech resumes; reuse at VAD stop (re-run on error) | real Moonshine, VAD stop → transcript: **498 / 380 / 442 ms → 196 / 224 / 200 ms (≈ −240 ms)** |
 | **Keep-warm** (`keepalive_s`) | token-free `root_async_client.models.list()` on the model's own pool every N s during a session; cancelled on stop | Together after 90 s idle: no cold penalty observed (off 376 / 383 ms vs keepalive 488 / 448 ms), so no benefit on this endpoint |
 
-**Final projection (EN, this 4-vCPU container, everything on):**
-VAD 200 + speculative STT ≈ 223 + LLM 426 + Kitten 138 ≈ **≈ 0.99 s** to the real reply's
-first audio. **≈ 220 ms** to the instant acknowledgement. Started at ≈ 2–4 s.
+**Projection (EN, summed stages, everything on):** VAD 200 + speculative STT ≈ 223 + LLM 426 +
+Kitten 138 ≈ 0.99 s. **Superseded by the true end-to-end measurement in §5.5: 1,051 ms**,
+because summing stages under-counts the time to stream the first 16-char clause from the LLM.
+The −240 ms is the STT-stage saving; end to end, speculative STT saved ≈ 180 ms. **≈ 220 ms** to the instant acknowledgement. Started at ≈ 2–4 s.
 Costs and risks: speculative STT spends extra compute on mid-utterance pauses,
 and a cancelled run can briefly hold the LiteRT lock.
 
