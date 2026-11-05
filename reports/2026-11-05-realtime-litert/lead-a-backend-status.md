@@ -55,3 +55,8 @@ Final gate: see lead's report.
 | (iii-M) + early_commit 120 | 1051 | 157 | 442 | 259 |
 | (iii) Zipformer-small CTC + spec + commit | 1462 (box contended) | 292 | 460 | 471 |
 CTC (C2): zipformer small 397 ms flat (fixed 16 s window), wav2vec2 1261 ms; neither beats Moonshine. 600 ms goal NOT met: LLM TTFT (~450) + TTS (~260-290) alone ~ 700-750 ms.
+
+### 5. Pipeline review (aa238ae6c64e7b545) -> C3, all 4 fixed, probes pass
+1 spec_task leak on Cancel/End/Interruption (MED); 2 early-commit wiped TurnClock so voice_to_first_audio never emitted (MED); 3 speech tail after early commit dropped (MED); 4 double LLMFullResponseStart leaked TTS task (LOW).
+Known limit: LiteRT lock lives in to_thread; cancelled speculative run holds it until its thread ends.
+CTC (C2): landed green, auto-detected (zipformer/wav2vec2). E2E re-run (box contended): CTC+spec+commit 1428 ms vs Moonshine+spec+commit 1329 ms. No gain.

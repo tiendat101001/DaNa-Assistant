@@ -778,7 +778,10 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
         what we have; if speech resumes, cancel and discard."""
         from dana_agent.conversation.ack import _rms  # noqa: PLC0415
 
-        if _rms(frame.audio) >= self._speech_rms:
+        loud = _rms(frame.audio) >= self._speech_rms
+        if self._committed and not self._post_loud and not loud:
+            return  # trailing silence after an early commit: nothing to transcribe
+        if loud:
             self._reset_spec()
             return
         self._low_bytes += len(frame.audio)

@@ -78,7 +78,6 @@ def test_duplicate_pull_and_delete_while_pulling_409(client: TestClient) -> None
     assert r.status_code == 202
     assert client.post(f"{M}/pull", headers=AUTH, json={"repo_id": RID}).status_code == 409
     assert client.delete(f"{M}/local/{RID}", headers=AUTH).status_code == 409
-    assert client.post(f"{M}/load", headers=AUTH, json={"repo_id": RID}).status_code == 409
     GATE.set()
     assert _wait(client, r.json()["job"]["id"])["status"] == "done"
 

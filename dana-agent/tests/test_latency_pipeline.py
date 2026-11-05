@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from pipecat.frames.frames import (
+    CancelFrame,
     InputAudioRawFrame,
     InterimTranscriptionFrame,
     LLMFullResponseEndFrame,
@@ -487,7 +488,6 @@ async def test_early_commit_not_before_silence_threshold() -> None:
 
 
 # --- reviewer probes (regressions) ---
-from pipecat.frames.frames import CancelFrame  # noqa: E402
 
 
 def _pl(n: int = 3200) -> InputAudioRawFrame:
@@ -498,58 +498,65 @@ def _pq(n: int = 3200) -> InputAudioRawFrame:
     return pcm(n)
 
 
-class SlowSTT:  # noqa: D101
-    def __init__(s):
-        s.started = 0
-        s.cancelled = 0
+class SlowSTT:
+    def __init__(self) -> None:
+        self.started = 0
+        self.cancelled = 0
 
-    async def stream(s, audio):
-        s.started += 1
+    async def stream(self, audio: AsyncIterator[AudioFrame]) -> AsyncIterator[Transcript]:
+        self.started += 1
         _ = [f async for f in audio]
         try:
             await asyncio.sleep(30)
         except asyncio.CancelledError:
-            s.cancelled += 1
+            self.cancelled += 1
             raise
         yield Transcript(text="x", is_final=True)
 
 
-async def test_spec_leak_on_cancel() -> None:
+async def test_spec_task_cancelled_on_cancel_frame() -> None:
     stt = SlowSTT()
-    p = ProviderSTTProcessor(stt, speculative=True, onset_ms=60)
+    p = ProviderSTTProcessor(stt, speculative=True, onset_ms=60)  # type: ignore[arg-type]
     await run(p, [VADUserStartedSpeakingFrame(), _pl(), _pq(), _pq()])
     await asyncio.sleep(0.05)
     assert p._spec_task is not None
     await run(p, [CancelFrame()])
     await asyncio.sleep(0.05)
-    assert stt.cancelled == 1, "spec task still running after CancelFrame"
+    assert stt.cancelled == 1
 
 
-async def test_early_commit_breaks_clock() -> None:
-    stt = FakeSTT()
+async def test_early_commit_keeps_turn_clock_valid() -> None:
     clk = TurnClock(clock=lambda: 0.0)
-    p = ProviderSTTProcessor(stt, speculative=True, onset_ms=60, early_commit_ms=150, clock=clk)
-    p.push_frame = lambda *a, **k: asyncio.sleep(0)
+    p = ProviderSTTProcessor(
+        FakeSTT(),  # type: ignore[arg-type]
+        speculative=True,
+        onset_ms=60,
+        early_commit_ms=150,
+        clock=clk,
+    )
+
+    async def noop(frame: Any, direction: Any = D) -> None:
+        await asyncio.sleep(0)
+
+    p.push_frame = noop
     for f in [VADUserStartedSpeakingFrame(), _pl(), _pq(), _pq()]:
         await p.process_frame(f, D)
     await asyncio.sleep(0.05)
-    await p.process_frame(_pq(), D)  # triggers commit
+    await p.process_frame(_pq(), D)  # triggers the commit
     await p.wait_idle()
-    clk.mark_end_of_speech()  # VAD stop arrives later (observer)
+    clk.mark_end_of_speech()  # the late VAD stop must not wipe the turn
     clk.mark_llm_first_token()
     clk.mark_tts_first_audio()
-    assert clk._audio is not None, (
-        "voice_to_first_audio never emitted after early commit (stt mark wiped by later VAD stop)"
-    )
+    assert clk._audio is not None
 
 
-async def test_resumed_speech_after_early_commit_lost() -> None:
+async def test_continued_speech_after_early_commit_is_transcribed() -> None:
     stt = FakeSTT()
-    p = ProviderSTTProcessor(stt, speculative=True, onset_ms=60, early_commit_ms=150)
-    out = []
+    p = ProviderSTTProcessor(stt, speculative=True, onset_ms=60, early_commit_ms=150)  # type: ignore[arg-type]
+    out: list[Any] = []
 
-    async def cap(f, d=D):
-        out.append(f)
+    async def cap(frame: Any, direction: Any = D) -> None:
+        out.append(frame)
 
     p.push_frame = cap
     for f in [VADUserStartedSpeakingFrame(), _pl(), _pq(), _pq()]:
@@ -558,30 +565,30 @@ async def test_resumed_speech_after_early_commit_lost() -> None:
     await p.process_frame(_pq(), D)
     await p.wait_idle()
     n = len(stt.calls)
-    # user keeps talking; VAD never fired stop so no new Started
     for f in [_pl(), _pl(), VADUserStoppedSpeakingFrame()]:
         await p.process_frame(f, D)
     await p.wait_idle()
-    assert len(stt.calls) == n + 1, "continued speech after early commit dropped"
+    assert len(stt.calls) == n + 1
 
 
-async def test_tts_double_start_leaks() -> None:
+async def test_tts_double_start_does_not_orphan_task() -> None:
     class P:
-        async def stream(s, t):
+        async def stream(self, t: AsyncIterator[str]) -> AsyncIterator[AudioChunk]:
             async for _x in t:
                 yield AudioChunk(pcm=b"\0\0", sample_rate=24000)
 
-    p = ProviderTTSProcessor(P())
-    out = []
+    p = ProviderTTSProcessor(P())  # type: ignore[arg-type]
 
-    async def cap(f, d=D):
-        out.append(f)
+    async def cap(frame: Any, direction: Any = D) -> None:
+        return None
 
     p.push_frame = cap
     await p.process_frame(LLMFullResponseStartFrame(), D)
     t1 = p._tts_task
+    assert t1 is not None
     await p.process_frame(LLMTextFrame(text="hi."), D)
-    await p.process_frame(LLMFullResponseStartFrame(), D)  # overlapping turn w/o End
+    await p.process_frame(LLMFullResponseStartFrame(), D)  # overlapping, no End
     await asyncio.sleep(0.05)
-    assert t1.done(), "first TTS task orphaned/never ended"
-    p._tts_task.cancel()
+    assert t1.done()
+    if p._tts_task is not None:
+        p._tts_task.cancel()
