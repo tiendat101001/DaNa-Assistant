@@ -51,15 +51,24 @@ components, which is why the user's instinct to self-host ASR/TTS is right.
 | Leg | New component | Budget | Mechanism |
 |---|---|---|---|
 | ① | Silero VAD, `latency.vad_stop_secs = 0.2` (configurable) | 200 ms | config-driven `VADParams` |
-| ② | **LiteRT Whisper-tiny i8 on CPU** (or Moonshine-tiny for EN) — or keep AssemblyAI | 80–250 ms | utterance-level local inference, no network; model pre-loaded + warmed |
-| ③ | Gemini 2.5 Flash-Lite **thinking_budget=0** / gpt-4.1-nano / **SGLang Qwen2.5-1.5B** local | 150–350 ms (cloud) · 30–120 ms (local GPU) | thinking off, `max_tokens` cap, connection pre-warm, prompt-prefix caching |
+| ② | **LiteRT Moonshine-tiny i8 (EN)** / Whisper-tiny i8 (VI) on CPU — or keep AssemblyAI | measured 250–480 ms (EN, Moonshine) · 1.0–1.5 s (VI, Whisper) on a 4-vCPU container | utterance-level local inference, no network; model pre-loaded + warmed; energy gate skips silence (~1 ms) |
+| ③ | Together DeepSeek-V4.1-Flash **reasoning off** (measured) · Gemini 2.5 Flash-Lite thinking 0 · gpt-4.1-nano · **SGLang Qwen2.5-1.5B** local | **measured 325–440 ms warm** (Together, reasoning off; 505 ms with reasoning; **7.5 s cold**) · 30–120 ms local GPU (estimate) | thinking off, `max_tokens` cap, connection pre-warm (warm-up), prompt-prefix caching |
 | ④ | **eager first-clause flush** (`tts_first_chunk_min_chars=20`) | ~0–150 ms | flush at the first `, ; :` once ≥ 20 chars |
-| ⑤ | **LiteRT KittenTTS-nano on CPU** (EN) · Piper (VI) · OpenAI `gpt-4o-mini-tts` (cloud fallback) | 40–150 ms local | ~30 MB fp16 3-stage model, pre-loaded + warmed |
-| | **Sum** | **≈ 450 – 600 ms** with local ASR+TTS and a non-thinking cloud LLM | |
+| ⑤ | **LiteRT KittenTTS-nano on CPU** (EN) · Piper (VI) · OpenAI `gpt-4o-mini-tts` (cloud fallback) | **measured 169 / 233 / 335 ms** to first speech for 10 / 20 / 40-char first clause (was ~1 s: 0.8 s of leading silence, now clamped) | ~32 MB fp16 3-stage model, pre-loaded + warmed |
+| | **Sum (measured legs, EN, 4-vCPU container)** | **≈ 200 + 300 + 375 + 233 ≈ 1.1 s** (vs ≈ 2–4 s before) | |
 
-The point is that the 600 ms target is reachable **only** with local ASR+TTS
-(or premium streaming cloud TTS), with thinking turned off and with eager
-chunking. Section 7 has the measured numbers we got in this container.
+**Honest read.** Every leg is now 2–5× faster than before, and the whole loop
+can be measured. On this 4-vCPU cloud container, though, the sum is about
+**1.1 s, not 0.6 s**. The remaining gap is about 500 ms, split between local STT
+(~300 ms) and cloud LLM TTFT (~375 ms). The levers that close it are in
+`02-implementation-and-verification.md` §5. In priority order:
+(1) **streaming/incremental STT**: transcribe Moonshine windows *while* the user
+speaks, so only the last ≤1 s is left at end-of-speech (≈ −200 ms);
+(2) a **local LLM on GPU** via SGLang (TTFT 30–120 ms, ≈ −250 ms), or Gemini
+Flash-Lite with thinking 0;
+(3) **speculative first clause**: start TTS on a short acknowledgement while
+the LLM streams;
+(4) a desktop CPU with more cores than this container.
 
 ---
 
@@ -139,7 +148,20 @@ Browser (WebGPU) ──GET /models/file?repo_id&path&token──▶ raw bytes �
 - `backend="webgpu"` is intentionally *not* a server-side backend. WebGPU lives
   in the browser, so the registry serves model bytes to the UI runtime instead.
 
-### 4.2 ASR: LiteRT Whisper (`providers/stt/litert.py`)
+### 4.2 ASR: LiteRT Whisper & Moonshine (`providers/stt/litert.py`)
+
+One provider, two strategies chosen by **signature introspection**:
+- **Moonshine-tiny** (`moonshine_tiny_5s_i8.tflite`, English): the encoder takes
+  *raw* 16 kHz audio `[1, 80000]` (5 s windows). The decoder is
+  `[1,64]` tokens + additive mask. Encode ≈ 30 ms, ≈ 21 ms per decode step, and
+  **250–480 ms** for a short command. The SentencePiece tokenizer is pulled from
+  `UsefulSensors/moonshine-tiny` as a companion.
+- **Whisper-tiny** (`whisper_tiny_30s_i8.tflite`, multilingual incl. Vietnamese):
+  described below. Its decode graph has a **static** `[1,128]` token window, so
+  `resize_tensor_input` is impossible. Every step costs ≈ 65 ms regardless of
+  prefix length, so a short Vietnamese command takes ≈ 1–1.5 s.
+- **Energy gate**: an utterance below −45 dBFS skips inference (≈ 1 ms). This
+  also removes Whisper's classic "you" hallucination on silence.
 `litert-community/whisper-tiny` → `whisper_tiny_30s_i8.tflite` (41 MB, INT8) exposes
 two signatures:
 
@@ -184,6 +206,16 @@ faster), `parakeet-*`, `Qwen3-ASR-0.6B` (Vietnamese tagged), and the
 Because `ProviderTTSProcessor` hands the provider one clause at a time, the first
 audio is produced after the **first clause**, not the whole reply.
 
+**Measured tuning.** Profiling showed the vocoder dominates compute
+(≈ 60 ms per second of audio). The real problem, though, was **perceptual**:
+the BOS token's predicted duration produced ~0.8 s of leading silence.
+Clamping the first token to 3 frames (envelope correlation 0.97–0.98 with the
+unclamped output) and trimming tail silence to 100 ms cut time-to-first-speech
+from ~1 s to **169 / 233 / 335 ms** for 10 / 20 / 40-char clauses. Two other
+ideas were measured and **rejected** because they degraded audio (correlation
+0.45–0.79): padding inputs to fixed shape buckets, and windowed vocoding.
+4 threads (= physical cores) was best.
+
 Vietnamese: no Vietnamese LiteRT TTS exists in the org today, so `language=vi`
 routes to the **Piper** provider (`vi_VN` voices, CPU ONNX). OpenAI
 `gpt-4o-mini-tts` (PCM streaming) is the low-latency cloud fallback for both
@@ -218,6 +250,15 @@ languages.
 - **Latency fields** map per provider: `thinking_budget` → Gemini only;
   `reasoning_effort` → OpenAI reasoning models only; `max_tokens`, `timeout_s`
   and `extra` are passed through.
+- **Together AI** (`provider=together`): a hosted OpenAI-compatible cloud for
+  open models. It reads `TG_API_KEY`/`TOGETHER_API_KEY`, `TG_BASE_URL` and
+  `TG_MODEL_ID`, and it is **not** classed as self-hosted, so `local_only` still
+  refuses it. Measured live on `deepseek-ai/DeepSeek-V4.1-Flash`: the cold first
+  call took **7.5 s**; warm TTFT was **~505 ms** with hidden reasoning and
+  **~375 ms** with `extra_body.reasoning.enabled=false` (the preset's default).
+  `reasoning_effort="minimal"` is rejected by this model (it accepts
+  low/high/xhigh/max). Env values are `.strip()`ped, because the provided file had
+  CRLF line endings that broke the URL.
 - **Presets** (`GET /api/v1/llm/presets`) are curated one-click config patches.
   **Probe** (`POST /api/v1/llm/probe`) measures real TTFT and total time against
   the live endpoint. **Health** checks an SGLang server's `/v1/models`.

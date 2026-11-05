@@ -352,6 +352,11 @@ class AgentController(Controller):
         elif path == "actions.gate_policy":
             # ActionGate.decide re-reads the policy per action → live effect now.
             self._stack.gate.set_policy(self._cfg.actions.gate_policy)
+            # MCP tools sit behind their own gate (one provider per gate); keep
+            # both in lock-step so a stricter policy also covers MCP servers.
+            mcp_gate = getattr(self._stack, "mcp_gate", None)
+            if mcp_gate is not None:
+                mcp_gate.set_policy(self._cfg.actions.gate_policy)
         elif path == "brain.max_steps":
             # Brain._stream re-reads the budget per turn → live on the next turn.
             if self._stack.brain is not None:

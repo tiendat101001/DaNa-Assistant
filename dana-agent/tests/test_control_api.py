@@ -265,4 +265,3 @@ def test_resolve_bot_check_endpoint(client: TestClient, controller: FakeControll
     assert res.status_code == 200
     assert res.json() == {"status": "resolved", "bypassed": True}
     assert "resolve_bot_check:True" in controller.calls
-

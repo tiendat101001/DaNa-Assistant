@@ -146,7 +146,7 @@ def test_together_maps_tg_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TG_API_KEY", "tg-test-key")
     monkeypatch.setenv("TG_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("TG_MODEL_ID", "org/some-model")
-    cfg = AppConfig(conversation={"llm": {"provider": "together"}})
+    cfg = AppConfig.model_validate({"conversation": {"llm": {"provider": "together"}}})
     llm = cfg.conversation.llm
     assert llm.api_key is not None and llm.api_key.get_secret_value() == "tg-test-key"
     assert llm.base_url == "https://example.invalid/v1"
@@ -167,7 +167,7 @@ def test_together_default_base_url_and_not_self_hosted(monkeypatch: pytest.Monke
     import langchain.chat_models as lc
 
     monkeypatch.setattr(lc, "init_chat_model", fake_init_chat_model)
-    model_mod.build_chat_model(LLMConfig(provider="together", model="m", api_key="k"))
+    model_mod.build_chat_model(LLMConfig(provider="together", model="m", api_key=SecretStr("k")))
     assert captured["model_provider"] == "openai"
     assert captured["base_url"] == "https://api.together.xyz/v1"
     assert "together" not in SELF_HOSTED_PROVIDERS  # cloud: local_only must reject it
@@ -180,7 +180,9 @@ def test_together_env_values_tolerate_crlf(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("TG_API_KEY", "tg-key\r")
     monkeypatch.setenv("TG_BASE_URL", "https://api.together.ai/v1\r")
     monkeypatch.setenv("TG_MODEL_ID", "org/model\r")
-    llm = AppConfig(conversation={"llm": {"provider": "together"}}).conversation.llm
+    llm = AppConfig.model_validate(
+        {"conversation": {"llm": {"provider": "together"}}}
+    ).conversation.llm
     assert llm.api_key is not None and llm.api_key.get_secret_value() == "tg-key"
     assert llm.base_url == "https://api.together.ai/v1"
     assert llm.model == "org/model"

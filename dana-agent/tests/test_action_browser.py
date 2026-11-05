@@ -237,17 +237,12 @@ async def test_read_text_arxiv_pdf_fallback() -> None:
     provider = make_provider(["arxiv.org"])
     ctx = FakeContext()
     html_body = (
-        b"<html><head><title>FAR-DPO Paper</title></head>"
-        b"<body>Abstract content</body></html>"
+        b"<html><head><title>FAR-DPO Paper</title></head><body>Abstract content</body></html>"
     )
     ctx.request = FakeAPIRequest(FakeResponse(body=html_body))
     provider._ctx = ctx
-    browser_with_fake_page(
-        provider, FakePage(body_text="", url="https://arxiv.org/pdf/2608.19808")
-    )
+    browser_with_fake_page(provider, FakePage(body_text="", url="https://arxiv.org/pdf/2608.19808"))
     result = await provider.execute(Action("browser_read_text", {}))
     assert result.ok is True
     assert "arXiv Paper Abstract" in result.output
     assert "Abstract content" in result.output
-
-
