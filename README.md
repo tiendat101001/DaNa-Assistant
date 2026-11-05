@@ -218,7 +218,7 @@ target: first audio within **600 ms** of you finishing a sentence.
    tools appear to the agent through the same gate: read-only tools run, the
    rest require confirmation.
 
-Vietnamese TTS uses Piper (`TTS__PROVIDER=piper`); LiteRT TTS is English only.
+Vietnamese TTS uses Piper (`TTS__PROVIDER=piper`, `TTS__VOICE=vi_VN-vais1000-medium` = the file stem next to its `.onnx.json`); LiteRT TTS is English only. For Vietnamese STT, whisper-tiny int8 is fast but inaccurate (~1.2-2 s per turn); prefer a larger Whisper or faster-whisper.
 
 ---
 

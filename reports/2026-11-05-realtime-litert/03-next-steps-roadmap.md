@@ -53,7 +53,7 @@ All ms saved are est. unless marked measured.
 
 | # | Item | ms saved / KPI | Effort | Owner | Go/no-go |
 |---|---|---|---|---|---|
-| N1 | Ship speculative STT + early commit as default-on for English, keep Vietnamese opt-in | measured 178 / 260 ms; e2e 1051 | S | Backend eng | Go if median e2e over 10 runs <= 1100 and the false early-commit rate (user continues within 1 s) < 5% on a 50-utterance set; else keep opt-in |
+| N1 | Fix, soak, then default-on speculative STT + early commit (English first, Vietnamese opt-in). Pipeline reviewer found 3 MED bugs in these opt-in paths, Lead A is fixing them: (1) cancel on Cancel/End/Interruption, (2) `voice_to_first_audio` missing for early-committed turns, (3) continued speech after an early commit is dropped. Do NOT flip defaults until all 3 are fixed and a soak test passes | measured 178 / 260 ms; e2e 1051 | S | Backend eng (Lead A) + QA | Go if the 3 fixes are merged, soak test clean (no stuck turns, no dropped speech), median e2e over 10 runs <= 1100 and false early-commit rate < 5% on a 50-utterance set; else keep opt-in |
 | N2 | Keep-alive + connection pre-warm to the LLM (`keepalive_s`), HTTP/2, prefix-cached static prompt | up to 100 of the 160-260 ms first-byte (est.) | S | Backend eng | Go if TTFT p50 drops >= 60 ms in `e2e_latency.py` |
 | N3 | Trim tool schemas per turn (route to a 6-8 tool subset by intent) to shorten prefill | 30-80 (est.) | M | Backend eng | Go if tool-selection accuracy stays >= current on `action_routing_eval.py` |
 | N4 | Lower `tts_first_chunk_min_chars` (try 12-16) and flush on the first clause boundary | 20-60 on the 260-295 ms gap (est.) | S | Backend eng | Go if no audible mid-word cuts in a 30-sample listening check |
@@ -65,12 +65,14 @@ All ms saved are est. unless marked measured.
 | # | Item | ms saved / KPI | Effort | Owner | Go/no-go |
 |---|---|---|---|---|---|
 | X1 | Local GPU LLM via SGLang (or vLLM) behind the existing OpenAI-compatible brain provider (config only: `base_url`), small tool-capable model, FP8/AWQ, prefix cache | LLM TTFT 440-480 down to 100-150 (est.); saves 300+ | M | Backend eng + ML eng | Go if TTFT p50 <= 150 ms with 26 tools AND tool-call accuracy >= 95% of the cloud model on `action_routing_eval.py`; no-go: stay on cloud with regional endpoint |
-| X2 | Preemptive generation: start the LLM on a stable partial transcript, cancel if the final text differs | 150-250 (est.; R3 to confirm technique and any claimed figures) | M | Backend eng | Go if wasted-call rate < 20% and no wrong action ever executes (gate layer unchanged, reads only until the final transcript confirms) |
+| X2 | Speculative LLM on stable partials (R3 T4): start the LLM when the partial is unchanged, cancel if the final text differs. Cost: +50-70% LLM calls (Deepgram claim, UNVERIFIED), so budget tokens | 100-200 (R3, UNVERIFIED) | M | Backend eng | Go if wasted-call rate < 20% and no wrong action ever executes (gate layer unchanged, reads only until the final transcript confirms) |
 | X3 | Streaming STT with partials (replace Moonshine tail 360-570 ms) | 200-350 (est.) | M | ML eng | Go if WER on EN and VI test set within +10% relative of Moonshine and tail < 150 ms |
-| X4 | Semantic turn detection (small end-of-turn model) to cut VAD hold of 200 ms to about 80-100 ms and avoid cutting users off | 100 (est.) and fewer false commits | M | ML eng | Go if the false-cut rate <= current and hold <= 100 ms |
+| X4 | Semantic turn detection: Pipecat Smart Turn v3 replaces the fixed 200 ms stop (R3 T1; 10-95 ms CPU inference per decision, vendor, UNVERIFIED on our box); A/B on real EN and VI voice | about 100-150 net (R3, UNVERIFIED) and fewer false cuts | S-M | ML eng | Go if the false-cut rate <= current and hold <= 100 ms |
 | X5 | Faster/streaming TTS on GPU with sub-clause chunks (first audio from 5-8 words) | 138 down to 60-90 (est.) | M | ML eng | Go if MOS-style listening check shows no regression for EN and VI |
 | X6 | Windows PC measurement pass: record e2e, per-stage p50/p95, CPU/GPU load, sleep/battery behaviour | KPI: first real number on target hardware | S | QA + owner | Go/no-go for everything above: run before buying or installing anything |
-| X7 | Product bet 1 (from R4): voice-driven KAM tasks (price/promo lookups, order or sell-in status, note capture after a store visit) as 5-8 typed tools | KPI: task success rate >= 85% and median time to complete < 20 s vs manual | M | Product + Backend | Go if 5 pilot users run >= 10 tasks each in a week at target success |
+| X7 | R4 Bet 2, Vietnamese voice quality gate (do first): 200-utterance VI/EN KAM phrase set, WER and first-audio for Moonshine/Whisper vs cloud STT | KPI: VI WER <= 15%, p50 first audio <= 1.0 s (R4 est.) | S-M | ML eng + Product | GO if both met; NO-GO (keep cloud STT for VI) if WER > 15% |
+| X7b | R4 Bet 3, preview-then-confirm write path: dry-run preview, read-back of names and numbers, CONFIRM on every external or financial action, audit log in UI | KPI: unsafe actions 0, rework <= 10% | M | Backend eng + Product | GO if 0 unsafe actions; NO-GO if any external send or promo submission happens without CONFIRM |
+| X7c | R4 Bet 1, KAM skill pack (product track): seller-center reads, competitor price scans, promo-calendar reading, dashboard Q&A, email drafts; read-only tier first, writes only after X7b | KPI: task success >= 80% on 30 scripted KAM tasks | M-L | Product + Backend | GO >= 80% with 0 unsafe actions; NO-GO < 70% or any unsafe action. Sequence: X7, X7b, X7c |
 | X8 | PWA remote client (mobile-app-plan Phase 1) to the home PC agent | KPI: remote e2e <= local + 150 ms (network) | M | Mobile/Frontend | Go if X1 is done and RTT p95 < 100 ms on target networks |
 
 ### LATER (1-3 months, bets)
@@ -80,7 +82,7 @@ All ms saved are est. unless marked measured.
 | L1 | Speech-native LLM / S2S (audio in, audio out) via the existing `S2SProvider` slot | removes STT and TTS hops; est. 300-500 total, vendor-claimed figures only | L | ML eng | Go only if tool use is reliable, Vietnamese quality is acceptable and the gate layer can still validate every action |
 | L2 | Hybrid native mobile (mobile-app-plan Phase 2) with on-device wake + VAD | KPI: wake false-accept < 1/day, battery drain < 5%/h idle | L | Mobile eng | Go if the PWA pilot shows weekly active use by >= 3 of 5 users |
 | L3 | On-device standalone (mobile-app-plan Phase 3, LiteRT-LM Gemma class) for offline/privacy mode | KPI: works offline for 5 core intents | L | Mobile + ML eng | Go if on-device decode >= 25 tok/s on a mid phone and quality passes the 5-intent eval |
-| L4 | Product bet 2 and 3 (from R4: beauty e-commerce CS/order assistant; competitor price watch voice digest) | KPI: weekly retained pilot users, hours saved per week | L | Product | Go if bet 1 shows retention >= 60% at week 4 |
+| L4 | Extend the KAM pack to the other R4 use cases and more portals after the 30-task gate passes | KPI: weekly retained pilot users, hours saved per week (est.) | L | Product | Go if X7c passes and pilot retention >= 60% at week 4 (est.) |
 | L5 | Distillation: small local model fine-tuned on our 26-tool traces for routing only | LLM prefill and decode cost down further | L | ML eng | Go if it beats the N3 router on accuracy at lower latency |
 
 ## 3. Fastest credible path to < 600 ms on the owner's Windows PC
@@ -126,6 +128,9 @@ at about 220 ms for perceived responsiveness.
 
 ## 4. Open items
 
-- Merge in R3 (technique list and any claimed numbers) and R4 (product bets, with
-  sources) once their files exist; adjust X2, X4, L1, X7, L4.
+- R3 and R4 are merged (X2, X4, X7, X7b, X7c). R3's file was reconciled to the true
+  e2e figures (1311 / 1133 / 1051 ms); its ~600-700 ms projection stays UNVERIFIED.
+- R4 caveats: Vietnamese support for ChatGPT, Gemini Live and Apple Intelligence is
+  unverified; prices are secondary-source.
+- R3 also lists streaming STT with partials (T18) as the enabler for X2; it maps to X3.
 - All "est." figures need a measurement on the PC (step 1) before being quoted.

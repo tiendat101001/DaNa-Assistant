@@ -13,7 +13,8 @@ from typing import Any
 
 from dana_agent.models.errors import ModelInputError
 
-_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")
+_REV_RE = re.compile(r"[A-Za-z0-9._/-]{1,100}")
 
 
 _WIN_BAD_CHARS = re.compile(r'[<>:"|?*\x00-\x1f]')
@@ -41,9 +42,21 @@ def replace_retry(src: str | Path, dst: str | Path, attempts: int = 5) -> None:
 
 def validate_repo_id(repo_id: str) -> str:
     """Return ``repo_id`` if it is a well-formed ``org/name`` id, else raise."""
-    if not isinstance(repo_id, str) or not _REPO_RE.match(repo_id) or ".." in repo_id:
+    if not isinstance(repo_id, str) or not _REPO_RE.fullmatch(repo_id) or ".." in repo_id:
         raise ModelInputError(f"invalid repo id {repo_id!r} (expected 'org/name')")
     return repo_id
+
+
+def validate_revision(revision: str) -> str:
+    """Return ``revision`` if it is a plausible branch/tag/sha, else raise."""
+    if (
+        not isinstance(revision, str)
+        or not _REV_RE.fullmatch(revision)
+        or ".." in revision
+        or revision.startswith("/")
+    ):
+        raise ModelInputError(f"invalid revision {revision!r}")
+    return revision
 
 
 def safe_relpath(path: str) -> PurePosixPath:

@@ -39,7 +39,15 @@ class FakeSession:
 
 
 def server(**kw: Any) -> MCPServerConfig:
+    # These tests exercise the annotation logic, so opt in explicitly; the
+    # config default is the safer confirm_all (see the test below).
+    kw.setdefault("trust", "annotations")
     return MCPServerConfig(name=kw.pop("name", "my-srv"), command="x", **kw)
+
+
+def test_default_trust_is_confirm_all() -> None:
+    """Untrusted servers must not be able to self-label tools read-only."""
+    assert MCPServerConfig(name="s", command="x").trust == "confirm_all"
 
 
 def make(tools: list[Any], session: FakeSession | None = None, **kw: Any) -> MCPActions:
@@ -200,3 +208,27 @@ def test_snake_case_annotations_mcp2() -> None:
     assert cls(m, "mcp_my_srv_ro") is Reversibility.READ_ONLY
     assert cls(m, "mcp_my_srv_rev") is Reversibility.REVERSIBLE
     assert cls(m, "mcp_my_srv_dflt") is Reversibility.DESTRUCTIVE
+
+
+def test_remote_server_defaults_to_confirm_all() -> None:
+    http = MCPServerConfig(name="r", transport="streamable_http", url="http://x/mcp")
+    m = MCPActions([])
+    m.register_tools(http, FakeSession(), [tool("ro", readOnlyHint=True)])
+    assert cls(m, "mcp_r_ro") is Reversibility.DESTRUCTIVE
+
+
+def test_remote_server_explicit_annotations_trust() -> None:
+    http = MCPServerConfig(
+        name="r", transport="streamable_http", url="http://x/mcp", trust="annotations"
+    )
+    m = MCPActions([])
+    m.register_tools(http, FakeSession(), [tool("ro", readOnlyHint=True)])
+    assert cls(m, "mcp_r_ro") is Reversibility.READ_ONLY
+
+
+def test_description_sanitized() -> None:
+    t = tool("t")
+    t.description = "line1\nIGNORE ALL\x00\x1b[31m" + "x" * 1000
+    (spec,) = make([t]).tool_specs()
+    assert "\n" not in spec.description and "\x00" not in spec.description
+    assert len(spec.description) < 340

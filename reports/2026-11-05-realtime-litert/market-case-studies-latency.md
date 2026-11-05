@@ -28,8 +28,10 @@ re-fetched. The Daily blog fetch failed (host not resolvable in this session).
    The text prefill rates on CPU (E2B: 111 tok/s, Google, secondary source) rule
    out using 3n as the tool-calling LLM on CPU. Its audio token rate (6.25/s) is
    cheap, so it adds little beyond STT.
-7. Measured DaNa floor (02 §5): VAD 200 + Moonshine 423 + LLM 426 + Kitten 138
-   ≈ 1,187 ms. Reaching < 600 ms needs streaming STT (no full-utterance decode)
+7. TRUE measured DaNa end-to-end (02 §5.5, last speech frame to first reply
+   audio, 4 vCPU, no GPU): 1311 ms plain, 1133 ms with speculative STT, 1051 ms
+   with early commit; LLM+TTS alone ≈ 700 ms. (The 1,187 ms sum of per-stage
+   medians VAD 200 + Moonshine 423 + LLM 426 + Kitten 138 is a superseded projection.) Reaching < 600 ms needs streaming STT (no full-utterance decode)
    and either overlap (speculative LLM) or a colocated LLM. Most published
    vendor numbers for the same stack sit at 0.5-0.6 s only under ideal conditions.
 8. Recommendation for the next sprint: (1) Smart Turn, (2) speculative LLM on
@@ -93,7 +95,7 @@ ms saved = estimated reduction on DaNa's critical path. Effort is for DaNa.
 
 ### Realtime and Live APIs (gpt-realtime, Gemini Live)
 - Only third-party measurement: GPT-Realtime 1,201 ms easy / 2,308 ms hard; Gemini 3.1 Live 1,407 ms ±118 ms (Plainconcepts, UNVERIFIED for independence). Forum reports of multi-second spikes (UNVERIFIED).
-- Lesson: no hosted S2S API in the sample beats DaNa's measured 1.19 s by enough to justify losing local Vietnamese and privacy.
+- Lesson: no hosted S2S API in the sample beats DaNa's measured 1.05-1.31 s end-to-end (02 §5.5) by enough to justify losing local Vietnamese and privacy.
 
 ### Cartesia (Sonic-3, Line)
 - Vendor TTFA ~90 ms. Measured end-to-end 166 ms median via Vapi (UNVERIFIED, secondary). DaNa Kitten 138 ms measured locally.
@@ -120,7 +122,7 @@ ms saved = estimated reduction on DaNa's critical path. Effort is for DaNa.
 
 ## 3. What is missing for the 600 ms target
 
-Projected budget for DaNa, not measured (all UNVERIFIED):
+Projected budget for DaNa. The "Today" column is a per-stage sum (superseded); the TRUE measured end-to-end is 1311 / 1133 / 1051 ms (02 §5.5). Projections are all UNVERIFIED:
 
 | Stage | Today (measured) | With T1 + T4 + T18 | With T13 (colocated LLM) |
 |---|---|---|---|
@@ -128,7 +130,7 @@ Projected budget for DaNa, not measured (all UNVERIFIED):
 | STT tail | 423 | ~150-250 (streaming partials) | ~150-250 |
 | LLM TTFT | 426 | ~250-430 overlapped with STT tail | ~200-250 (no network leg) |
 | TTS first chunk | 138 | 138 | 138 |
-| Total | ~1,187 | ~600-700 | ~570-640 |
+| Total | ~1,187 (sum; true e2e 1311 plain / 1051 best) | ~600-700 | ~570-640 |
 
 Conclusion: no single technique reaches 600 ms. Streaming STT and colocated LLM
 are required, plus a turn detector. Each needs its own before-and-after measurement.

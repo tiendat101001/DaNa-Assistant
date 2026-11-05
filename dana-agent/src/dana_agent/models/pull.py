@@ -26,6 +26,7 @@ from dana_agent.models.store import (
     resolve_in_model_dir,
     safe_relpath,
     validate_repo_id,
+    validate_revision,
 )
 from dana_agent.observability import get_logger
 
@@ -126,6 +127,7 @@ class Downloader:
         """Download ``files`` (``{path, size}``) for ``job``. Updates job fields;
         re-raises cancellation after marking the job cancelled."""
         validate_repo_id(job.repo_id)
+        validate_revision(job.revision)
         for f in files:
             validate_repo_id(f.get("repo_id", job.repo_id))
             safe_relpath(f["path"])  # reject traversal before touching the network
@@ -194,7 +196,12 @@ class Downloader:
             except httpx.HTTPError as exc:
                 raise HubUnavailableError(f"download failed: {type(exc).__name__}: {exc}") from exc
             if resp.is_redirect and "location" in resp.headers:
-                url = urljoin(str(resp.url), resp.headers["location"])
+                nxt = urljoin(str(resp.url), resp.headers["location"])
+                scheme, prev = urlsplit(nxt).scheme, urlsplit(url).scheme
+                if scheme not in ("http", "https") or (prev == "https" and scheme != "https"):
+                    await resp.aclose()
+                    raise HubUnavailableError("refusing insecure or invalid redirect")
+                url = nxt
                 await resp.aclose()
                 continue
             return resp

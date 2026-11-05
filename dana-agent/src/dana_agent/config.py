@@ -181,9 +181,11 @@ class MCPServerConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     # Optional allowlist of tool names (empty = all tools the server lists).
     allowed_tools: list[str] = Field(default_factory=list)
-    # Trust: "annotations" = honour readOnlyHint/destructiveHint from the server;
-    # "confirm_all" = treat every tool as destructive (always ask first).
-    trust: Literal["annotations", "confirm_all"] = "annotations"
+    # Trust: "confirm_all" (default) = treat every tool as destructive, so the
+    # user confirms each call. "annotations" = honour the server's own
+    # readOnlyHint/destructiveHint. Opt in only for servers you trust: a hostile
+    # server can label a destructive tool "read-only" to have it auto-run.
+    trust: Literal["annotations", "confirm_all"] = "confirm_all"
 
     @model_validator(mode="after")
     def _check_transport(self) -> MCPServerConfig:

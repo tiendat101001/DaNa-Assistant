@@ -57,6 +57,11 @@ plug-and-play computer use instead of hard-coded sites, and a mobile plan.
 |---|---|---|
 | 1 | `01-architecture-deep-dive.md` | High-level concept → mechanisms of every component, latency budget math |
 | 2 | `02-implementation-and-verification.md` | What shipped (files, APIs, config), test evidence, measured latency, gap-closing plan, runbook |
+| 2b | `03-next-steps-roadmap.md` | Now / Next / Later roadmap (with go/no-go metrics) and the fastest credible path to < 600 ms on a PC with a GPU |
+| 2c | `user-guide-models.md` · `README.vi.md` | Step-by-step guide for non-engineers · Vietnamese executive summary |
+| 2d | `vietnamese-path.md` | Vietnamese end to end on real models (Piper vi_VN + Whisper-tiny vi), measured |
+| 2e | `windows-compat-review.md` | Windows 10/11 compatibility review (14 items, with fixes / deferred) |
+| 2f | `market-case-studies-latency.md` · `market-landscape.md` | How production voice agents get < 600 ms · competitive landscape and KAM use cases |
 | 3 | `litert-community-catalog.md` | Live snapshot of the 443 litert-community repos (all ASR/TTS listed) |
 | 4 | `00-team-contract.md` | Team structure, ownership and the REST contracts the team built against |
 | 5 | `lead-a-backend-status.md`, `lead-b-product-status.md` | Team-lead task boards with evidence |

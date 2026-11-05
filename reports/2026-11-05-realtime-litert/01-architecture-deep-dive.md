@@ -313,7 +313,10 @@ new code.
    namespaced `mcp_<server>_<tool>`, and **classified from MCP annotations**
    (`readOnlyHint` → read-only, `destructiveHint=false` → reversible, the MCP
    default → destructive = confirm). `trust="confirm_all"` and an optional
-   `allowed_tools` list are available for untrusted servers.
+   `allowed_tools` list are available. **Default trust is `confirm_all`**: every
+   MCP call needs confirmation unless the user opts a trusted server into
+   `trust="annotations"`. Otherwise a hostile server could label a destructive
+   tool read-only (security review finding).
 
 Vision-based computer-use models (Gemini/OpenAI/Anthropic CUA) are the planned
 fallback only when there is no accessibility tree (canvas apps, games). They are

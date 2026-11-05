@@ -289,3 +289,26 @@ async def test_delete_busy_keeps_manifest(tmp_path: Path, monkeypatch: pytest.Mo
 
 async def _noop() -> None:
     return None
+
+
+def test_repo_id_and_revision_validation() -> None:
+    from dana_agent.models.store import validate_repo_id, validate_revision
+
+    with pytest.raises(ModelInputError):
+        validate_repo_id("org/name\n")
+    for bad in ("main..x", "a b", "", "x" * 101, "/abs", "a?b"):
+        with pytest.raises(ModelInputError):
+            validate_revision(bad)
+    assert validate_revision("refs/pr/1") == "refs/pr/1"
+
+
+async def test_https_to_http_redirect_refused(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "hub.test":
+            return httpx.Response(302, headers={"Location": "http://cdn.test/b"})
+        return httpx.Response(200, content=BLOB)
+
+    dl = Downloader(ModelsConfig(hub_endpoint=HUB), httpx.MockTransport(handler))
+    job = new_job("org/m")
+    await dl.run(job, [{"path": "a.bin", "size": 0}], tmp_path)
+    assert job.status == "failed" and "redirect" in (job.error or "")

@@ -173,6 +173,9 @@ async def probe(
         same_provider = overlay.get("provider", current.provider) == current.provider
         if "api_key" not in overlay:
             merged["api_key"] = current.api_key if same_provider else None
+        new_url = overlay.get("base_url", current.base_url)
+        if new_url != current.base_url:
+            merged["api_key"] = overlay.get("api_key")  # never send a stored key elsewhere
         if not same_provider:
             for k in ("base_url", "model"):
                 if k not in overlay:
@@ -189,7 +192,7 @@ async def probe(
 async def health(base_url: str = Query(min_length=1)) -> dict[str, Any]:
     url = base_url.rstrip("/") + "/models"
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=3.0, follow_redirects=False) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()

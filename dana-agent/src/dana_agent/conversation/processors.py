@@ -475,6 +475,8 @@ class ProviderTTSProcessor(FrameProcessor):  # type: ignore[misc]
         await super().process_frame(frame, direction)
 
         if isinstance(frame, LLMFullResponseStartFrame):
+            if self._tts_task is not None and not self._tts_task.done():
+                await self._cancel_tts()  # overlapping start without End: no orphan
             self._active = True
             self._buffer = ""
             self._sentence_count = 0
@@ -689,6 +691,10 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
         self._speech_rms = speech_rms
         self._commit_bytes = int(early_commit_ms / 1000 * sample_rate) * 2
         self._low_bytes = 0
+        # After an early commit we keep collecting: loud audio that follows is a
+        # new turn whose tail is transcribed at the VAD stop (otherwise dropped).
+        self._committed = False
+        self._post_loud = False
         self._spec_task: asyncio.Task[list[Transcript]] | None = None
         self._preroll_bytes = int(preroll_s * sample_rate) * 2
         self._max_bytes = int(max_utterance_s * sample_rate) * 2
@@ -709,11 +715,18 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
             self._utterance = list(self._preroll)
             self._utt_len = self._preroll_len
             self._truncated = False
+            self._committed = False
+            self._post_loud = False
             self._reset_spec()
             self._preroll.clear()
             self._preroll_len = 0
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
-            if self._utterance:
+            if self._committed and not self._post_loud:
+                self._utterance = None  # only trailing silence since the early commit
+                self._committed = False
+                self._reset_spec()
+            elif self._utterance:
+                self._committed = False
                 frames, self._utterance = self._utterance, None
                 spec, self._spec_task = self._spec_task, None
                 task = asyncio.ensure_future(self._transcribe(frames, spec))
@@ -723,9 +736,13 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
                 self._utterance = None
                 self._reset_spec()
         elif isinstance(frame, CancelFrame):
+            self._reset_spec()
             await self._cancel_tasks()
         elif isinstance(frame, EndFrame):
+            self._reset_spec()
             await self.wait_idle(wait_s=5.0)  # let the last transcript out
+        elif isinstance(frame, InterruptionFrame):
+            self._reset_spec()
         await self.push_frame(frame, direction)
 
     def _on_audio(self, frame: InputAudioRawFrame) -> None:
@@ -737,6 +754,11 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
                 return
             self._utterance.append(frame)
             self._utt_len += len(frame.audio)
+            if self._committed:
+                from dana_agent.conversation.ack import _rms  # noqa: PLC0415
+
+                if _rms(frame.audio) >= self._speech_rms:
+                    self._post_loud = True
             if self._speculative:
                 self._track_energy(frame)
             return
@@ -774,8 +796,13 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
         ):
             # Early commit: emit now. Clearing the utterance makes the later VAD
             # stop a no-op; renewed speech starts a fresh turn (documented).
-            frames, self._utterance = self._utterance, None
+            frames, self._utterance = self._utterance, []
+            self._utt_len = 0
+            self._committed = True
+            self._post_loud = False
             spec, self._spec_task = self._spec_task, None
+            if self._clock is not None:
+                self._clock.expect_late_stop(self._low_bytes * 1000 // (self._sample_rate * 2))
             log.info(
                 "stt_early_commit", silence_ms=self._low_bytes * 1000 // (self._sample_rate * 2)
             )

@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -16,7 +17,7 @@ from dana_agent.models.errors import (
     HubUnavailableError,
     ModelNotFoundError,
 )
-from dana_agent.models.store import validate_repo_id
+from dana_agent.models.store import validate_repo_id, validate_revision
 from dana_agent.observability import get_logger
 
 log = get_logger(__name__)
@@ -300,6 +301,12 @@ class HubClient:
             items.extend(d for d in data if isinstance(d, dict))
             nxt = resp.links.get("next")
             next_url = nxt["url"] if nxt else None
+            if (
+                next_url
+                and urlsplit(next_url).netloc.lower() != urlsplit(self.endpoint).netloc.lower()
+            ):
+                log.warning("hub_link_next_foreign_host_ignored")
+                next_url = None
             next_params = None
         return items
 
@@ -354,6 +361,7 @@ class HubClient:
 
     async def model_detail(self, repo_id: str, revision: str = "main") -> dict[str, Any]:
         validate_repo_id(repo_id)
+        validate_revision(revision)
         async with self._client() as client:
             try:
                 meta_resp = await self._get(client, f"{self.endpoint}/api/models/{repo_id}")
@@ -363,7 +371,7 @@ class HubClient:
             meta = meta_resp.json()
             tree = await self._get_json_pages(
                 client,
-                f"{self.endpoint}/api/models/{repo_id}/tree/{revision}",
+                f"{self.endpoint}/api/models/{repo_id}/tree/{quote(revision, safe='')}",
                 {"recursive": "true"},
                 100_000,
             )

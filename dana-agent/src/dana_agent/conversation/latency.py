@@ -47,6 +47,7 @@ class TurnClock:
         self._tok: float | None = None
         self._audio: float | None = None
         self._ack: float | None = None
+        self._late_stop = False
 
     @property
     def active(self) -> bool:
@@ -55,13 +56,28 @@ class TurnClock:
     def reset(self) -> None:
         self.turn_id = ""
         self._eos = self._stt = self._tok = self._audio = self._ack = None
+        self._late_stop = False
 
     def mark_end_of_speech(self) -> str:
-        """Start a new turn (VAD stop or typed-turn injection)."""
+        """Start a new turn (VAD stop or typed-turn injection). A VAD stop that
+        arrives after an early commit belongs to the already-running turn and
+        is ignored."""
+        if self._late_stop:
+            self._late_stop = False
+            return self.turn_id
         self.reset()
         self.turn_id = uuid.uuid4().hex[:8]
         self._eos = self._clock() - self._vad_delay_s
         return self.turn_id
+
+    def expect_late_stop(self, silence_ms: float) -> None:
+        """Early commit: the transcript is sent ``silence_ms`` after speech ended,
+        before the VAD stop. Start the turn now (end of speech = silence_ms ago)
+        and swallow the VAD stop that follows."""
+        self.reset()
+        self.turn_id = uuid.uuid4().hex[:8]
+        self._eos = self._clock() - silence_ms / 1000.0
+        self._late_stop = True
 
     def mark_ack_first_audio(self) -> None:
         """First audio of the instant acknowledgement. Reported on its own stage

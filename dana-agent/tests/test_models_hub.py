@@ -280,3 +280,19 @@ def test_keyword_fallback_matches_whole_tokens() -> None:
     assert classify_task(None, [], "MoGe-2-LiteRT") == "other"  # not "ge"/"moge" substrings
     assert classify_task(None, [], "graphics-asrx") == "other"
     assert classify_task(None, [], "Phi-3-mini") == "llm"
+
+
+async def test_foreign_link_next_not_followed() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        return httpx.Response(
+            200,
+            json=[_item(1, 1)],
+            headers={"Link": '<https://evil.test/api/models?page=2>; rel="next"'},
+        )
+
+    hub = HubClient(ModelsConfig(hub_endpoint=HUB), transport=httpx.MockTransport(handler))
+    assert len((await hub.list_models()).models) == 1
+    assert set(seen) == {"hub.test"}

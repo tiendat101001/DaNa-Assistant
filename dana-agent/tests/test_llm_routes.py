@@ -126,3 +126,31 @@ def test_probe_resolves_env_key_fallback(
     assert cfg.api_key is not None and cfg.api_key.get_secret_value() == "tg-secret"
     assert cfg.base_url == "https://example.invalid/v1"
     assert "tg-secret" not in str(r)
+
+
+def test_probe_drops_stored_key_on_base_url_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic import SecretStr
+
+    cfg = clean_config()
+    cfg.conversation.llm.provider = "openai"
+    cfg.conversation.llm.api_key = SecretStr("stored")
+    cfg.conversation.llm.base_url = "https://a.invalid/v1"
+    app = FastAPI()
+    app.state.controller = _Ctl(cfg)
+    app.state.control_token = TOKEN
+    app.include_router(llm_api)
+    seen: dict[str, Any] = {}
+
+    async def fake_probe(c: Any) -> dict[str, Any]:
+        seen["cfg"] = c
+        return {"ok": True, "ttft_ms": 1.0, "total_ms": 1.0, "text": "", "error": None}
+
+    monkeypatch.setattr(llm_routes, "probe_llm", fake_probe)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with TestClient(app) as c:
+        c.post("/api/v1/llm/probe", headers=H, json={"base_url": "https://evil.invalid/v1"})
+        assert seen["cfg"].api_key is None
+        c.post("/api/v1/llm/probe", headers=H, json={})
+        assert seen["cfg"].api_key.get_secret_value() == "stored"

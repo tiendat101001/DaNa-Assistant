@@ -29,6 +29,7 @@ log = get_logger(__name__)
 
 MAX_OUTPUT_CHARS = 4000
 _MAX_NAME = 64
+_MAX_DESC = 300
 _UNSAFE = re.compile(r"[^a-zA-Z0-9_]")
 _SCALARS: dict[str, type] = {
     "string": str,
@@ -40,6 +41,20 @@ _SCALARS: dict[str, type] = {
 
 def _sanitize(text: str) -> str:
     return _UNSAFE.sub("_", text)
+
+
+def _effective_trust(server: MCPServerConfig) -> str:
+    """Annotations are self-reported by the server, so a remote (http/sse) server
+    is treated as confirm_all unless the config explicitly sets ``trust``."""
+    if server.transport != "stdio" and "trust" not in server.model_fields_set:
+        return "confirm_all"
+    return server.trust
+
+
+def _clean(text: str, limit: int = _MAX_DESC) -> str:
+    """Single-line, control-char-free, length-capped (prompt-injection hygiene)."""
+    flat = "".join(" " if ch.isspace() else ch for ch in text if ch.isprintable() or ch.isspace())
+    return " ".join(flat.split())[:limit]
 
 
 def _hint(ann: Any, snake: str, camel: str) -> object:
@@ -154,7 +169,7 @@ class MCPActions(ActionProvider):
         allowed = entry.server.allowed_tools
         if allowed and entry.tool_name not in allowed:
             return Reversibility.OUT_OF_SCOPE
-        if entry.server.trust == "confirm_all":
+        if _effective_trust(entry.server) == "confirm_all":
             return Reversibility.DESTRUCTIVE
         ann = getattr(entry.tool, "annotations", None)
         if _hint(ann, "read_only_hint", "readOnlyHint") is True:
@@ -216,7 +231,7 @@ class MCPActions(ActionProvider):
         args: list[ToolArg] = []
         for arg_name, prop in props.items():
             prop = prop if isinstance(prop, dict) else {}
-            desc = str(prop.get("description") or arg_name)
+            desc = _clean(str(prop.get("description") or arg_name))
             ptype = prop.get("type")
             annotation = _SCALARS.get(ptype) if isinstance(ptype, str) else None
             if annotation is None:
@@ -225,7 +240,6 @@ class MCPActions(ActionProvider):
             args.append(
                 ToolArg(arg_name, annotation, desc, required=arg_name in required, default=None)
             )
-        description = (
-            f"[MCP:{entry.server.name}] {getattr(tool, 'description', None) or entry.tool_name}"
-        )
+        raw = str(getattr(tool, "description", None) or entry.tool_name)
+        description = f"[MCP:{entry.server.name}] {_clean(raw)}"
         return ToolSpec(name, description, tuple(args))

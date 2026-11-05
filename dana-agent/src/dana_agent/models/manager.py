@@ -28,6 +28,7 @@ from dana_agent.models.store import (
     resolve_in_model_dir,
     safe_relpath,
     validate_repo_id,
+    validate_revision,
 )
 from dana_agent.observability import get_logger
 
@@ -119,6 +120,7 @@ class ModelManager:
         num_threads: int = 4,
     ) -> PullJob:
         validate_repo_id(repo_id)
+        validate_revision(revision)
         for job in self._jobs.values():
             if job.repo_id == repo_id and job.active:
                 raise ModelBusyError(f"{repo_id} is already being pulled (job {job.id})")
@@ -157,6 +159,7 @@ class ModelManager:
 
     async def _run_pull(self, job: PullJob, files: list[dict[str, Any]], rec: ModelRecord) -> None:
         try:
+            await self._release_files(job.repo_id)  # re-pull over a loaded model
             await self._downloader.run(job, files, Path(self.cfg.models_dir))
         except asyncio.CancelledError:
             rec.status, rec.error = "failed", "cancelled"
@@ -305,6 +308,23 @@ class ModelManager:
             await asyncio.to_thread(self._get_cache().unload, path)
         return self.get_local(repo_id)
 
+    async def _release_files(self, repo_id: str) -> None:
+        """Close any runtime models mmapping files under the repo dir (needed
+        before deleting/replacing files on Windows). Never raises."""
+        try:
+            cache: Any = self._cache
+            if cache is None:
+                from dana_agent.runtime.litert import MODEL_CACHE
+
+                cache = MODEL_CACHE
+            fn = getattr(cache, "unload_under", None)
+            if fn is not None:
+                await asyncio.to_thread(fn, model_dir(self.cfg.models_dir, repo_id))
+        except Exception as exc:  # noqa: BLE001 - best effort
+            log.debug("release_files_skipped", repo_id=repo_id, error=str(exc))
+        self._loaded.pop(repo_id, None)
+        self._loaded_paths.pop(repo_id, None)
+
     async def delete(self, repo_id: str) -> None:
         validate_repo_id(repo_id)
         if any(j.repo_id == repo_id and j.active for j in self._jobs.values()):
@@ -313,6 +333,7 @@ class ModelManager:
             raise ModelNotFoundError(f"model {repo_id!r} is not pulled")
         if repo_id in self._loaded:
             await self.unload(repo_id)
+        await self._release_files(repo_id)
         target = model_dir(self.cfg.models_dir, repo_id)
         for attempt in range(5):
             # Windows keeps mmapped .tflite files locked until released.

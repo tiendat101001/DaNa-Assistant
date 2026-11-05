@@ -27,3 +27,5 @@
 ## Deferred
 - pull.py max_bytes cap vs hostile repo (low; needs cfg field = lead's config.py, risky before 14:30).
 - /models/file ?token= uses long-lived control token in URL (low; needs HMAC ticket, UI+API change).
+- Vietnamese STT quality/latency (whisper-tiny int8 poor, 30 s fixed window ~1.2-2 s): no provider bug; documented in README, model upgrade is a product decision.
+- C6: submit-button classification (snapshot lacks button type; would prompt on every Search).
