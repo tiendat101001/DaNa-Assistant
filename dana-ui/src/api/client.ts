@@ -41,6 +41,15 @@ export class ControlApi {
     return parsed as T;
   }
 
+  // Generic authenticated call for feature modules (models, llm, ...).
+  call<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.request<T>(method, path, body);
+  }
+
+  get bearer(): string {
+    return this.token;
+  }
+
   // Auth probe: a cheap authenticated GET to validate the token.
   async checkToken(): Promise<Status> {
     return this.request<Status>("GET", "/status");

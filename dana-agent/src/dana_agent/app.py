@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any, TypeVar
 
 import dana_agent.providers  # noqa: F401  register providers
 from dana_agent.actions import ActionGate
@@ -22,8 +23,9 @@ from dana_agent.brain import (
     build_chat_model,
     open_checkpointer,
 )
+from dana_agent.brain.tools import build_gated_tools
 from dana_agent.capabilities import validate_app_config
-from dana_agent.config import AppConfig, get_settings
+from dana_agent.config import AppConfig, STTConfig, TTSConfig, get_settings
 from dana_agent.observability import get_logger
 from dana_agent.providers.base import (
     ActionProvider,
@@ -77,10 +79,21 @@ class AssembledStack:
     tts: TTSProvider | None = None
     s2s: S2SProvider | None = None
     brain: Brain | None = None
+    # Plug-and-play MCP tool servers (own ActionGate sharing the audit log).
+    mcp: ActionProvider | None = None
+    mcp_gate: ActionGate | None = None
     _close_checkpointer: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
 
     async def aclose(self) -> None:
-        for provider in (self.vad, self.wake, self.actions, self.stt, self.tts, self.s2s):
+        for provider in (
+            self.vad,
+            self.wake,
+            self.actions,
+            self.stt,
+            self.tts,
+            self.s2s,
+            self.mcp,
+        ):
             if provider is not None:
                 await provider.aclose()
         if self._close_checkpointer is not None:
@@ -109,15 +122,17 @@ async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
         gate=gate,
     )
     if cfg.conversation.mode == "cascade":
-        stack.stt = build_stt(cfg.conversation.stt)
-        stack.tts = build_tts(cfg.conversation.tts)
+        stack.stt = build_stt(_with_local_model_path(cfg.conversation.stt, cfg))
+        stack.tts = build_tts(_with_local_model_path(cfg.conversation.tts, cfg))
         checkpointer, close_checkpointer = await open_checkpointer(cfg.brain.memory)
         stack._close_checkpointer = close_checkpointer
+        tools = build_action_tools(cfg.actions, gate)
+        tools += await _build_mcp_tools(cfg, stack, audit)
         stack.brain = Brain(
             build_chat_model(cfg.conversation.llm),
             gate,
             system_prompt=_effective_system_prompt(cfg.brain.system_prompt, cfg.language),
-            tools=build_action_tools(cfg.actions, gate),
+            tools=tools,
             max_steps=cfg.brain.max_steps,
             checkpointer=checkpointer,
             history=HistoryPolicy(
@@ -131,6 +146,7 @@ async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
 
     log.info(
         "stack_assembled",
+        mcp_servers=len([s for s in cfg.actions.mcp_servers if s.enabled]),
         language=cfg.language,
         mode=cfg.conversation.mode,
         vad=cfg.vad.provider,
@@ -146,3 +162,44 @@ async def build_stack(cfg: AppConfig | None = None) -> AssembledStack:
         local_only=cfg.privacy.local_only,
     )
     return stack
+
+
+async def _build_mcp_tools(cfg: AppConfig, stack: AssembledStack, audit: AuditLog) -> list[Any]:
+    """Discover tools from configured MCP servers and wrap each one in a gated
+    LangChain tool. MCP tools get their *own* ActionGate (same policy, same
+    audit log) because the gate wraps exactly one provider. A server that fails
+    to connect is skipped by ``MCPActions.connect`` — it never blocks startup."""
+    servers = [s for s in cfg.actions.mcp_servers if s.enabled]
+    if not servers:
+        return []
+    from dana_agent.providers.actions.mcp import MCPActions  # noqa: PLC0415
+
+    mcp = MCPActions(servers)
+    await mcp.connect()
+    mcp_gate = ActionGate(mcp, policy=cfg.actions.gate_policy, audit=audit)
+    stack.mcp = mcp
+    stack.mcp_gate = mcp_gate
+    specs = mcp.tool_specs()
+    log.info("mcp_tools_ready", count=len(specs), names=[s.name for s in specs][:50])
+    return list(build_gated_tools(specs, mcp_gate))
+
+
+# Providers whose ``model`` may be a model-registry id (HF repo id) on local disk.
+_REGISTRY_BACKED = frozenset({"litert", "piper"})
+
+_SubCfg = TypeVar("_SubCfg", STTConfig, TTSConfig)
+
+
+def _with_local_model_path(sub: _SubCfg, cfg: AppConfig) -> _SubCfg:
+    """Resolve a registry id (``litert-community/whisper-tiny``) to its pulled
+    directory under ``models.models_dir`` so local providers honour the
+    configured models dir. Returns a *copy* — the live config (and what the UI
+    shows) is untouched. An explicit ``model_path`` always wins."""
+    if sub.provider not in _REGISTRY_BACKED or sub.model_path or "/" not in sub.model:
+        return sub
+    from dana_agent.models.store import model_dir  # noqa: PLC0415
+
+    path = model_dir(cfg.models.models_dir, sub.model)
+    if not path.is_dir():
+        return sub  # provider reports a clear "pull it first" error at warm-up
+    return sub.model_copy(update={"model_path": str(path)})

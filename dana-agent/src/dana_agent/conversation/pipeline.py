@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
@@ -32,6 +33,7 @@ from dana_agent.conversation.processors import (
     BrainProcessor,
     HalfDuplexGateProcessor,
     MuteProcessor,
+    ProviderSTTProcessor,
     ProviderTTSProcessor,
     S2SProcessor,
     WakeGateProcessor,
@@ -42,6 +44,7 @@ from dana_agent.providers.wake.assemblyai import AssemblyAIWakeDetector
 if TYPE_CHECKING:
     from dana_agent.app import AssembledStack
     from dana_agent.config import AppConfig
+    from dana_agent.conversation.latency import TurnClock
     from dana_agent.conversation.mute import MicGate
 
 log = get_logger(__name__)
@@ -52,7 +55,20 @@ _STT_SAMPLE_RATE = 16_000
 _TTS_SAMPLE_RATE = 24_000
 
 
-def _build_stt_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
+def _build_vad(cfg: AppConfig) -> SileroVADAnalyzer:
+    lat = cfg.conversation.latency
+    return SileroVADAnalyzer(
+        params=VADParams(
+            confidence=lat.vad_confidence,
+            start_secs=lat.vad_start_secs,
+            stop_secs=lat.vad_stop_secs,
+        )
+    )
+
+
+def _build_stt_service(
+    cfg: AppConfig, stack: AssembledStack, clock: TurnClock | None = None
+) -> FrameProcessor:
     """Return a pipecat STT FrameProcessor for the configured provider."""
     provider = cfg.conversation.stt.provider
 
@@ -89,10 +105,11 @@ def _build_stt_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
         # thin FrameProcessor so tests stay fully offline.
         return _MockSTTBridge(stack.stt)
 
-    raise ValueError(
-        f"STT provider '{provider}' is not supported in the Pipecat pipeline. "
-        "Supported: assemblyai, deepgram, mock."
-    )
+    # Any other registered provider (litert, faster_whisper, ...): bridge the
+    # STTProvider ABC with VAD-segmented utterances.
+    if stack.stt is None:
+        raise ValueError(f"STT provider '{provider}' is not set on the stack")
+    return ProviderSTTProcessor(stack.stt, sample_rate=_STT_SAMPLE_RATE, clock=clock)
 
 
 def _build_tts_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
@@ -121,7 +138,11 @@ def _build_tts_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:
     # For all other providers (gemini, mock, …) use the provider-ABC bridge.
     if stack.tts is None:
         raise ValueError("TTS provider is not set on the stack")
-    return ProviderTTSProcessor(stack.tts, chunk_sentences=cfg.conversation.tts.chunk_sentences)
+    return ProviderTTSProcessor(
+        stack.tts,
+        chunk_sentences=cfg.conversation.tts.chunk_sentences,
+        first_chunk_min_chars=cfg.conversation.latency.tts_first_chunk_min_chars,
+    )
 
 
 def _build_wake_gate(cfg: AppConfig, *, bypass: bool) -> WakeGateProcessor:
@@ -163,6 +184,7 @@ def build_cascade_pipeline(
     session_id: str | None = None,
     bypass_wake_gate: bool = False,
     mic_gate: MicGate | None = None,
+    clock: TurnClock | None = None,
 ) -> tuple[LocalAudioTransport, Pipeline, WakeGateProcessor]:
     """Assemble and return the Pipecat cascade pipeline.
 
@@ -186,13 +208,13 @@ def build_cascade_pipeline(
             audio_out_enabled=True,
             audio_out_sample_rate=_TTS_SAMPLE_RATE,
             audio_out_channels=1,
-            vad_analyzer=SileroVADAnalyzer(),
+            vad_analyzer=_build_vad(cfg),
         )
     )
 
     # ----- processors -------------------------------------------------------
     wake_gate = _build_wake_gate(cfg, bypass=bypass_wake_gate)
-    stt = _build_stt_service(cfg, stack)
+    stt = _build_stt_service(cfg, stack, clock)
 
     # When no_interrupt is enabled, BotSpeakingGate is shared between
     # BrainProcessor (writer) and HalfDuplexGateProcessor (reader) so the
@@ -259,7 +281,7 @@ def build_s2s_pipeline(
             audio_out_enabled=True,
             audio_out_sample_rate=_TTS_SAMPLE_RATE,
             audio_out_channels=1,
-            vad_analyzer=SileroVADAnalyzer(),
+            vad_analyzer=_build_vad(cfg),
         )
     )
 

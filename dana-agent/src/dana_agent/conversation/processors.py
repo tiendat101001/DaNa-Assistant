@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
@@ -43,6 +45,7 @@ from pipecat.frames.frames import (
     EndFrame,
     Frame,
     InputAudioRawFrame,
+    InterimTranscriptionFrame,
     InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -53,21 +56,51 @@ from pipecat.frames.frames import (
     VADUserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.utils.time import time_now_iso8601
 
 from dana_agent.brain.agent import Brain
 from dana_agent.brain.events import ConfirmationRequired, TokenDelta
 from dana_agent.conversation.mute import BotSpeakingGate, MicGate
 from dana_agent.observability import get_logger
-from dana_agent.providers.base import S2SProvider, TTSProvider
+from dana_agent.providers.base import S2SProvider, STTProvider, TTSProvider
 from dana_agent.types import AudioFrame
 
 if TYPE_CHECKING:
+    from dana_agent.conversation.latency import TurnClock
     from dana_agent.providers.wake.assemblyai import AssemblyAIWakeDetector
 
 log = get_logger(__name__)
 
 # Sentence boundary pattern: flush text to TTS when these appear.
 _SENTENCE_END = re.compile(r"[.!?。！？…\n]")
+_SENTENCE_CHARS = frozenset(".!?。！？…\n")
+_CLAUSE_CHARS = frozenset(",;:—–，；：、") | _SENTENCE_CHARS
+# "3,5" / "1.5" / "10:30": punctuation right after a digit is held until we see
+# what follows (whitespace -> boundary; digit -> part of a number).
+_NUMERIC_PUNCT = frozenset(",.:")
+
+
+def eager_split(buffer: str, min_chars: int) -> int:
+    """Index just past the first flushable boundary in ``buffer``, or ``-1``.
+
+    A boundary is a clause char (``, ; : - —``) or sentence end that is followed
+    by whitespace (or ends the buffer, unless it sits right after a digit so we
+    never split numbers). Clause boundaries need ``>= min_chars`` of text before
+    them; sentence ends flush regardless of length.
+    """
+    n = len(buffer)
+    for i, ch in enumerate(buffer):
+        if ch not in _CLAUSE_CHARS:
+            continue
+        nxt_ok = i + 1 == n or buffer[i + 1].isspace()
+        if not nxt_ok:
+            continue
+        if i + 1 == n and ch in _NUMERIC_PUNCT and i > 0 and buffer[i - 1].isdigit():
+            continue
+        if ch in _SENTENCE_CHARS or len(buffer[: i + 1].strip()) >= min_chars:
+            if buffer[: i + 1].strip():
+                return i + 1
+    return -1
 
 
 # ---------------------------------------------------------------------------
@@ -418,11 +451,20 @@ class ProviderTTSProcessor(FrameProcessor):  # type: ignore[misc]
     """
 
     def __init__(
-        self, provider: TTSProvider, *, chunk_sentences: int = 1, **kwargs: object
+        self,
+        provider: TTSProvider,
+        *,
+        chunk_sentences: int = 1,
+        first_chunk_min_chars: int = 0,
+        **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self._provider = provider
         self._chunk_sentences = chunk_sentences
+        # Eager first chunk (0 = off): the first chunk of each reply flushes at
+        # the first clause boundary holding >= N chars, or at a sentence end.
+        self._first_min = first_chunk_min_chars
+        self._first_done = False
         self._buffer = ""
         self._sentence_count = 0
         self._active = False
@@ -436,12 +478,22 @@ class ProviderTTSProcessor(FrameProcessor):  # type: ignore[misc]
             self._active = True
             self._buffer = ""
             self._sentence_count = 0
+            self._first_done = False
             self._text_queue = asyncio.Queue()
             self._tts_task = asyncio.ensure_future(self._run_tts())
             await self.push_frame(frame, direction)
 
         elif isinstance(frame, LLMTextFrame) and self._active:
             self._buffer += frame.text
+            if self._first_min > 0 and not self._first_done:
+                cut = eager_split(self._buffer, self._first_min)
+                if cut > 0:
+                    chunk = self._buffer[:cut].strip()
+                    self._buffer = self._buffer[cut:]
+                    self._sentence_count = 0
+                    self._first_done = True
+                    await self._text_queue.put(chunk)
+                return
             if _SENTENCE_END.search(frame.text):
                 self._sentence_count += 1
                 # chunk_sentences=0 → hold everything until LLMFullResponseEndFrame
@@ -588,3 +640,150 @@ class S2SProcessor(FrameProcessor):  # type: ignore[misc]
             if frame is None:
                 break
             yield frame
+
+
+# ---------------------------------------------------------------------------
+# ProviderSTTProcessor  (any STTProvider ABC -> pipecat)
+# ---------------------------------------------------------------------------
+
+_MAX_UTTERANCE_S = 30.0
+_PREROLL_S = 0.3
+
+
+class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
+    """Bridges any :class:`STTProvider` (litert, faster_whisper, mock, ...) into
+    pipecat, using the transport's VAD boundaries to segment utterances.
+
+    A ~300 ms pre-roll ring of ``InputAudioRawFrame`` is always kept, so the
+    soft onset VAD needs ``start_secs`` to confirm is not clipped. On
+    ``VADUserStartedSpeakingFrame`` the pre-roll seeds a new utterance; on
+    ``VADUserStoppedSpeakingFrame`` the utterance is handed to
+    ``provider.stream()`` in a background task (the pipeline is never blocked),
+    partials become ``InterimTranscriptionFrame`` and finals
+    ``TranscriptionFrame``. Every incoming frame is passed through unchanged.
+    Provider errors are logged, never raised.
+    """
+
+    def __init__(
+        self,
+        provider: STTProvider,
+        *,
+        sample_rate: int = 16_000,
+        preroll_s: float = _PREROLL_S,
+        max_utterance_s: float = _MAX_UTTERANCE_S,
+        clock: TurnClock | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._provider = provider
+        self._sample_rate = sample_rate
+        self._preroll_bytes = int(preroll_s * sample_rate) * 2
+        self._max_bytes = int(max_utterance_s * sample_rate) * 2
+        self._clock = clock
+        self._preroll: deque[InputAudioRawFrame] = deque()
+        self._preroll_len = 0
+        self._utterance: list[InputAudioRawFrame] | None = None
+        self._utt_len = 0
+        self._truncated = False
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, InputAudioRawFrame):
+            self._on_audio(frame)
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            self._utterance = list(self._preroll)
+            self._utt_len = self._preroll_len
+            self._truncated = False
+            self._preroll.clear()
+            self._preroll_len = 0
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            if self._utterance:
+                frames, self._utterance = self._utterance, None
+                task = asyncio.ensure_future(self._transcribe(frames))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+            else:
+                self._utterance = None
+        elif isinstance(frame, CancelFrame):
+            await self._cancel_tasks()
+        elif isinstance(frame, EndFrame):
+            await self.wait_idle(wait_s=5.0)  # let the last transcript out
+        await self.push_frame(frame, direction)
+
+    def _on_audio(self, frame: InputAudioRawFrame) -> None:
+        if self._utterance is not None:
+            if self._utt_len + len(frame.audio) > self._max_bytes:
+                if not self._truncated:
+                    self._truncated = True
+                    log.warning("stt_utterance_capped", max_bytes=self._max_bytes)
+                return
+            self._utterance.append(frame)
+            self._utt_len += len(frame.audio)
+            return
+        self._preroll.append(frame)
+        self._preroll_len += len(frame.audio)
+        while self._preroll_len > self._preroll_bytes and len(self._preroll) > 1:
+            self._preroll_len -= len(self._preroll.popleft().audio)
+
+    async def wait_idle(self, wait_s: float | None = None) -> None:
+        """Wait for in-flight transcriptions (used on EndFrame and in tests)."""
+        if self._tasks:
+            await asyncio.wait(set(self._tasks), timeout=wait_s)
+
+    async def _cancel_tasks(self) -> None:
+        for t in list(self._tasks):
+            t.cancel()
+        await self.wait_idle(wait_s=1.0)
+
+    async def _transcribe(self, frames: list[InputAudioRawFrame]) -> None:
+        t0 = time.monotonic()
+        last_partial = ""
+        language = "en"
+        got_final = False
+
+        async def audio() -> AsyncIterator[AudioFrame]:
+            for f in frames:
+                yield AudioFrame(
+                    pcm=f.audio,
+                    sample_rate=f.sample_rate or self._sample_rate,
+                    channels=f.num_channels or 1,
+                )
+
+        try:
+            async for tr in self._provider.stream(audio()):
+                text = tr.text.strip()
+                language = tr.language or language
+                if not tr.is_final:
+                    if text:
+                        last_partial = text
+                        await self.push_frame(
+                            InterimTranscriptionFrame(
+                                text=text, user_id="user", timestamp=time_now_iso8601()
+                            )
+                        )
+                    continue
+                got_final = True
+                if text:
+                    await self._push_final(text, t0)
+            if not got_final and last_partial:
+                await self._push_final(last_partial, t0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - never crash the pipeline
+            log.error("stt_error", exc=str(exc))
+
+    async def _push_final(self, text: str, t0: float) -> None:
+        if self._clock is not None:
+            self._clock.mark_stt_final()
+        else:
+            log.info(
+                "latency",
+                stage="stt",
+                turn_id=uuid.uuid4().hex[:8],
+                ms=round((time.monotonic() - t0) * 1000),
+            )
+        await self.push_frame(
+            TranscriptionFrame(text=text, user_id="user", timestamp=time_now_iso8601())
+        )

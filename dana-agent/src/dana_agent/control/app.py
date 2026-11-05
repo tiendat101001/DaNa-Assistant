@@ -22,8 +22,11 @@ from fastapi.staticfiles import StaticFiles
 from dana_agent.config import AppConfig
 from dana_agent.control.controller import Controller
 from dana_agent.control.events import EventBus
+from dana_agent.control.llm_routes import llm_api
 from dana_agent.control.log_bridge import install_log_bridge, uninstall_log_bridge
+from dana_agent.control.models_routes import models_api
 from dana_agent.control.routes import api
+from dana_agent.models import ModelManager
 from dana_agent.observability import get_logger
 
 log = get_logger(__name__)
@@ -55,8 +58,12 @@ def create_control_app(
     app.state.controller = controller
     app.state.bus = bus
     app.state.control_token = control_token
+    # Self-hosted model registry (HF litert-community -> .dana/models -> runtime).
+    app.state.models = ModelManager(cfg.models)
 
     app.include_router(api)
+    app.include_router(llm_api)
+    app.include_router(models_api)
 
     if serve_ui:
         dist = Path(cfg.control.ui_dist_dir)

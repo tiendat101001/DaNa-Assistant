@@ -44,12 +44,53 @@ class FakeLocator:
 
     async def click(self) -> None:
         self._page.clicks.append(self._meta)
+        if self._page.after_click_url is not None:
+            self._page.url = self._page.after_click_url
 
     async def fill(self, text: str) -> None:
         self._page.fills.append((self._meta, text))
 
     async def scroll_into_view_if_needed(self) -> None:
         self._page.scroll_targets.append(self._meta)
+
+    # --- generic observe -> act surface (browser_act / site search) ---------
+
+    async def count(self) -> int:
+        css = str(self._meta.get("css", ""))
+        if 'data-dana-ref="' in css:
+            ref = css.split('data-dana-ref="', 1)[1].split('"', 1)[0]
+            return 0 if ref in self._page.stale_refs else 1
+        return self._page.css_counts.get(css, self._page.css_default_count)
+
+    async def evaluate(self, script: str, arg: Any = None) -> Any:
+        self._page.locator_evals.append((self._meta, script))
+        css = str(self._meta.get("css", ""))
+        ref = css.split('data-dana-ref="', 1)[1].split('"', 1)[0] if "data-dana-ref" in css else ""
+        return self._page.live_labels.get(ref)
+
+    async def _rec(self, verb: str, *extra: object) -> None:
+        self._page.acts.append((verb, self._meta.get("css"), *extra))
+
+    async def press_sequentially(self, text: str) -> None:
+        await self._rec("type", text)
+
+    async def select_option(self, label: str | None = None) -> None:
+        await self._rec("select", label)
+
+    async def check(self) -> None:
+        await self._rec("check")
+
+    async def uncheck(self) -> None:
+        await self._rec("uncheck")
+
+    async def hover(self) -> None:
+        await self._rec("hover")
+
+    async def focus(self) -> None:
+        await self._rec("focus")
+
+    async def press(self, key: str) -> None:
+        await self._rec("press", key)
 
 
 class FakeResponse:
@@ -133,6 +174,19 @@ class FakePage:
         self.scroll_y = 0.0
         # Tab/history interaction recording.
         self.history_calls: list[str] = []
+        # --- generic observe -> act (C6) ---
+        # Canned result of the in-page snapshot script (None -> empty page).
+        self.snapshot_result: dict[str, Any] | None = None
+        self.snapshot_calls: list[Any] = []  # args passed with each snapshot eval
+        self.first_results: list[dict[str, Any]] = []  # canned first_results script
+        self.stale_refs: set[str] = set()  # refs whose locator.count() is 0
+        self.live_labels: dict[str, Any] = {}  # ref -> {"name","href"} for the click re-check
+        self.css_counts: dict[str, int] = {}  # per-selector locator.count()
+        self.css_default_count = 1
+        self.acts: list[tuple[Any, ...]] = []  # (verb, css, *extra) from locators
+        self.locator_evals: list[tuple[dict[str, object], str]] = []
+        self.load_state_waits = 0
+        self.after_click_url: str | None = None  # URL the page lands on after a click
         self.brought_to_front = 0
         self.closed = False
 
@@ -161,6 +215,13 @@ class FakePage:
     @property
     def mouse(self) -> FakeMouse:
         return FakeMouse(self)
+
+    async def wait_for_load_state(
+        self,
+        state: str = "load",
+        timeout: float | None = None,  # noqa: ASYNC109 — mirrors Playwright's signature
+    ) -> None:
+        self.load_state_waits += 1
 
     async def goto(self, url: str, wait_until: str | None = None) -> None:
         self.goto_urls.append(url)
@@ -193,6 +254,13 @@ class FakePage:
         m = self.media
         if name == "bot_check":
             return self.bot_check if self.bot_check is not None else {"blocked": False}
+        if name == "snapshot":
+            self.snapshot_calls.append(arg)
+            if self.snapshot_result is not None:
+                return self.snapshot_result
+            return {"title": self.doc_title, "url": self.url, "total": 0, "elements": []}
+        if name == "first_results":
+            return self.first_results
         if name == "scroll_to":
             self.scroll_y = 0.0 if arg[0] == "top" else 8_000.0
             return self.scroll_y

@@ -9,7 +9,7 @@ import ipaddress
 from urllib.parse import urlparse
 
 import dana_agent.providers  # noqa: F401  ensure all providers are registered
-from dana_agent.brain.providers import BRAIN_PROVIDERS
+from dana_agent.brain.providers import BRAIN_PROVIDERS, SELF_HOSTED_PROVIDERS
 from dana_agent.config import AppConfig, ProviderConfig
 from dana_agent.errors import CapabilityError, ConfigError
 from dana_agent.observability import get_logger
@@ -136,6 +136,16 @@ def _llm_capabilities(cfg: AppConfig) -> Capabilities | None:
     brain backend (openai/gemini/anthropic) that is not a self-hosted
     :class:`LLMProvider` in the registry — which, under local_only, means it is
     treated as a cloud provider and rejected."""
+    llm = cfg.conversation.llm
+    if llm.provider in SELF_HOSTED_PROVIDERS:
+        # sglang/vllm/ollama/lmstudio: on-box by default (loopback base_url);
+        # an explicit non-local base_url is rejected by _require_local_provider.
+        return Capabilities(
+            streaming=True,
+            languages=frozenset({"en", "vi"}),
+            self_hosted=True,
+            tool_calling=True,
+        )
     try:
         return build_llm(cfg.conversation.llm).capabilities
     except ConfigError:

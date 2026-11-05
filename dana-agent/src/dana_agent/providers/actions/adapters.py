@@ -13,6 +13,8 @@ pins URL building; selector drift is caught by the opt-in live probes
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
@@ -76,12 +78,45 @@ ADAPTERS: dict[str, SiteAdapter] = {
 }
 
 
-def search_url(engine: str, query: str) -> str | None:
-    """Build a search URL, or None for an unknown engine (default-deny)."""
-    adapter = ADAPTERS.get(engine)
-    if adapter is None:
+_DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$")
+
+
+def merged_templates(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Built-in engine templates overlaid with the user's ``cfg.search_engines``.
+
+    User entries must be http(s) templates containing ``{q}``; anything else is
+    dropped (default-deny: a malformed template never becomes a navigation)."""
+    out = {name: a.search_template for name, a in ADAPTERS.items()}
+    for name, tpl in (extra or {}).items():
+        key = name.strip().lower()
+        if key and "{q}" in tpl and tpl.lower().startswith(("http://", "https://")):
+            out[key] = tpl
+    return out
+
+
+def known_engines(extra: Mapping[str, str] | None = None) -> list[str]:
+    return sorted(merged_templates(extra))
+
+
+def search_url(engine: str, query: str, extra: Mapping[str, str] | None = None) -> str | None:
+    """Build a search URL, or None for an unknown engine (default-deny).
+
+    ``extra`` is the user's configured ``{name: template}`` map; the query is
+    URL-encoded into the ``{q}`` slot."""
+    template = merged_templates(extra).get(engine.strip().lower())
+    if template is None:
         return None
-    return adapter.search_template.format(q=quote_plus(query))
+    return template.replace("{q}", quote_plus(query))
+
+
+def bare_domain(engine: str) -> str | None:
+    """``"shopee.vn"`` / ``"https://www.shopee.vn/x"`` -> ``"www.shopee.vn"``, or
+    None when ``engine`` is not a domain-looking string."""
+    text = engine.strip().lower()
+    for prefix in ("https://", "http://"):
+        text = text.removeprefix(prefix)
+    host = text.split("/", 1)[0].split("?", 1)[0]
+    return host if _DOMAIN_RE.match(host) else None
 
 
 def adapter_for_url(url: str) -> SiteAdapter | None:

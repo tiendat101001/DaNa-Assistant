@@ -34,6 +34,28 @@ local = [
     "openwakeword>=0.6",
     "piper-tts>=1.2",
 ]
+# Self-hosted realtime speech on LiteRT (CPU / XNNPACK): Whisper / Moonshine ASR
+# and KittenTTS — models pulled from huggingface.co/litert-community by the
+# model registry. ai-edge-litert ships win_amd64 wheels for cp310-cp314.
+litert = [
+    "ai-edge-litert>=2.0,<3",
+    "numpy>=1.26",
+]
+# Piper (ONNX) CPU TTS — the Vietnamese voice path (no vi LiteRT TTS exists yet).
+piper = [
+    "piper-tts>=1.2,<2",
+]
+# Model registry: HuggingFace Hub catalog + resumable downloads (and the LLM
+# health/probe routes). httpx is pure-python.
+models = [
+    "httpx>=0.27,<1",
+]
+# Plug-and-play tool servers via the Model Context Protocol (gated by ActionGate).
+mcp = [
+    "mcp>=1.9,<3",
+]
+# One-shot self-hosted speech stack: LiteRT ASR/TTS + Piper + model registry.
+selfhost = ["dana-agent[litert,piper,models]"]
 # Phase 2 — commercial wake word (default v1 wake engine)
 wake = [
     "pvporcupine>=3.0",
@@ -53,11 +75,13 @@ brain-anthropic = ["langchain-anthropic>=0.2,<2"]
 # Everything for a live session + Talk UI + actions in one extra. NOTE: uv
 # sync REPLACES the extra set — always include every extra you need (or just
 # this one) or previously-installed extras get pruned.
-all = ["dana-agent[cloud,brain,brain-openai,brain-google,actions,control]"]
+all = ["dana-agent[cloud,brain,brain-openai,brain-google,actions,control,litert,piper,models,mcp]"]
 # Phase 5 — action layer. pycaw backs os_volume (master mixer via COM).
 actions = [
     "playwright>=1.44,<2",
     "pycaw>=20240207",
+    # Generic desktop-app control via Windows UI Automation (os_ui_snapshot/act).
+    "pywinauto>=0.6.8; sys_platform == 'win32'",
 ]
 # Phase 6 — control API + secrets vault + tray. pillow is pystray's image dep.
 control = [
@@ -155,6 +179,15 @@ module = [
     "comtypes.*",
     "winsdk.*",
     "winrt.*",
+    # Self-hosted runtimes (litert / piper / models / mcp extras).
+    "ai_edge_litert.*",
+    "tflite_runtime.*",
+    "piper.*",
+    "faster_whisper.*",
+    "mcp.*",
+    "openai.*",
+    "pywinauto.*",
+    "uiautomation.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

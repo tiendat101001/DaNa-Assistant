@@ -4,7 +4,6 @@ import { EventStream } from "./api/ws";
 import type {
   AssistantTurn,
   AuditEntry,
-  BotCheckData,
   ConfirmationRequest,
   Envelope,
   LatencySpan,
@@ -22,6 +21,7 @@ import { FsmView } from "./features/FsmView";
 import { LatencyWaterfall } from "./features/LatencyWaterfall";
 import { AuditView } from "./features/AuditView";
 import { ConfigEditor } from "./features/ConfigEditor";
+import { ModelsView } from "./features/models/ModelsView";
 import { ConfirmationPrompt } from "./features/ConfirmationPrompt";
 
 const TOKEN_KEY = "dana.control.token";
@@ -32,7 +32,7 @@ export function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) ?? "");
   const [authed, setAuthed] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [tab, setTab] = useState<"talk" | "dashboard">("talk");
+  const [tab, setTab] = useState<"talk" | "dashboard" | "models">("talk");
 
   const [status, setStatus] = useState<Status | null>(null);
   const [transitions, setTransitions] = useState<StateTransition[]>([]);
@@ -156,6 +156,13 @@ export function App() {
           >
             🛠 Dashboard
           </button>
+          <button
+            className={tab === "models" ? "tab active" : "tab"}
+            onClick={() => setTab("models")}
+            aria-current={tab === "models"}
+          >
+            🧩 Models
+          </button>
         </nav>
         <StatusBar status={status} connected={connected} />
       </header>
@@ -174,6 +181,8 @@ export function App() {
             onChange={refreshStatus}
           />
         </main>
+      ) : tab === "models" ? (
+        <ModelsView api={api} spans={spans} />
       ) : (
         <main className="grid">
           <section className="card controls">

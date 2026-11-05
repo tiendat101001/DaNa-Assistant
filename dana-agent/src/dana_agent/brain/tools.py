@@ -21,7 +21,7 @@ tools instead of none.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
@@ -239,13 +239,18 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "browser_search",
-        "Search on an allowlisted engine (youtube, google, duckduckgo, wikipedia, "
-        "arxiv) in one step. With open_first=True, click the first result too — "
-        "e.g. 'play lofi on YouTube' or 'find paper on arxiv' "
-        "(opens the PDF by default for arXiv) is one call.",
+        "Search a site in one step. engine is FREE-FORM: a configured engine name "
+        "(built-ins: youtube, google, duckduckgo, wikipedia, arxiv, plus any the "
+        "user configured) OR any allowlisted domain such as 'shopee.vn' (DaNa opens "
+        "the site, finds its search box and submits). With open_first=True it also "
+        "opens the first result on an allowlisted host; if none is clear it returns "
+        "a browser_snapshot to choose from. E.g. 'play lofi on YouTube' or 'find "
+        "paper on arxiv' is one call.",
         (
             ToolArg("query", str, "The search query."),
-            ToolArg("engine", str, "youtube|google|duckduckgo|wikipedia|arxiv"),
+            ToolArg(
+                "engine", str, "Engine name or allowlisted domain (e.g. 'youtube', 'shopee.vn')."
+            ),
             ToolArg("open_first", bool, "Also click the first result.", required=False),
         ),
     ),
@@ -266,6 +271,31 @@ BROWSER_TOOLS: tuple[ToolSpec, ...] = (
         "Download a file from an allowlisted URL into DaNa's downloads folder. "
         "Executable files are refused. Report the saved path to the user.",
         (ToolArg("url", str, "Direct http(s) URL of the file (must be allowlisted)."),),
+    ),
+    ToolSpec(
+        "browser_snapshot",
+        "OBSERVE the current page on ANY website: returns a compact numbered list "
+        'of visible interactive elements (e12 link "Sign in" -> host, e5 textbox '
+        '"Search", e7 checkbox [checked], headings...) as untrusted page data. '
+        "Workflow: call browser_snapshot, then browser_act(ref=eN, ...) to use an "
+        "element by its ref. Refs only last until the page changes: RE-SNAPSHOT "
+        "after any navigation, click that changes the page, or a 'stale ref' error. "
+        "Prefer this over guessing text for browser_click.",
+    ),
+    ToolSpec(
+        "browser_act",
+        "ACT on an element by the ref from the latest browser_snapshot. action: "
+        "click | type (keystrokes) | fill (replace field value, needs text) | "
+        "select (option label in text) | check | uncheck | hover | focus | press "
+        "(needs key, e.g. Enter). Clicking a Delete/Send/Pay/Submit-style control "
+        "asks the user to confirm; links to non-allowlisted sites are refused. On "
+        "'stale ref', call browser_snapshot again.",
+        (
+            ToolArg("ref", str, "Element ref from browser_snapshot, e.g. 'e12'."),
+            ToolArg("action", str, "click|type|fill|select|check|uncheck|hover|focus|press"),
+            ToolArg("text", str, "Text for type/fill/select.", required=False),
+            ToolArg("key", str, "Key for press (e.g. 'Enter').", required=False),
+        ),
     ),
 )
 
@@ -318,7 +348,44 @@ OS_TOOLS: tuple[ToolSpec, ...] = (
         "What is playing system-wide right now (title/artist/status of the "
         "current media session, any app) — answers 'what song is this?'.",
     ),
+    ToolSpec(
+        "os_ui_snapshot",
+        "OBSERVE a desktop app (Windows UI Automation): numbered list of its "
+        'controls (u3 Button "Save" id=..., u4 Edit ...) for the foreground '
+        "window or a window whose title contains `title`. Only allowlisted apps. "
+        "Workflow: os_ui_snapshot, then os_ui_act(ref=uN, ...); re-snapshot after "
+        "the UI changes (dialogs, tab switches) or on a stale-ref error.",
+        (ToolArg("title", str, "Window title substring (default: foreground).", required=False),),
+    ),
+    ToolSpec(
+        "os_ui_act",
+        "ACT on a desktop control by the ref from the latest os_ui_snapshot. "
+        "action: click|invoke | type|set_text (text) | select | toggle | focus | "
+        "expand | collapse. Invoking Delete/Send/Pay-style controls asks the user "
+        "to confirm. On 'stale ref', call os_ui_snapshot again.",
+        (
+            ToolArg("ref", str, "Control ref from os_ui_snapshot, e.g. 'u3'."),
+            ToolArg(
+                "action", str, "click|invoke|type|set_text|select|toggle|focus|expand|collapse"
+            ),
+            ToolArg("text", str, "Text for type/set_text.", required=False),
+        ),
+    ),
 )
+
+
+def browser_tool_specs(cfg: ActionsConfig) -> list[ToolSpec]:
+    """BROWSER_TOOLS with the browser_search description naming every configured
+    engine (built-ins + ``cfg.search_engines``) so the model knows what exists."""
+    from dana_agent.providers.actions.adapters import known_engines  # noqa: PLC0415
+
+    engines = ", ".join(known_engines(cfg.search_engines))
+    out: list[ToolSpec] = []
+    for spec in BROWSER_TOOLS:
+        if spec.name == "browser_search":
+            spec = replace(spec, description=spec.description + f" Configured engines: {engines}.")
+        out.append(spec)
+    return out
 
 
 def action_tool_specs(cfg: ActionsConfig) -> list[ToolSpec]:
@@ -326,12 +393,12 @@ def action_tool_specs(cfg: ActionsConfig) -> list[ToolSpec]:
     unknown/mock provider exposes no real tools)."""
     os_tools = list(OS_TOOLS) if cfg.os_actions_enabled else []
     if cfg.provider == "browser":
-        return list(BROWSER_TOOLS)
+        return browser_tool_specs(cfg)
     if cfg.provider == "os":
         return os_tools
     if cfg.provider == "browser_os":
         # Browser + OS together: both surfaces, OS still opt-in.
-        return list(BROWSER_TOOLS) + os_tools
+        return browser_tool_specs(cfg) + os_tools
     return []
 
 

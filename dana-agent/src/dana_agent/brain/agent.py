@@ -73,6 +73,9 @@ class Brain:
     ) -> None:
         self._gate = gate
         self._max_steps = max_steps
+        # The unbound chat model, exposed for connection/prompt-cache warm-up at
+        # session start (conversation.warmup) — never used to run turns directly.
+        self._model = model
         # Accept either ToolSpecs (wrapped by the gate here) or already-gated
         # BaseTools (built by build_action_tools at the composition root).
         self._tools: list[BaseTool] = [
@@ -87,6 +90,11 @@ class Brain:
             policy=history or HistoryPolicy(),
             summarizer=model,  # unbound model: summaries don't call tools
         )
+
+    @property
+    def model(self) -> BaseChatModel:
+        """The unbound chat model (for warm-up / latency probes)."""
+        return self._model
 
     def set_max_steps(self, max_steps: int) -> None:
         """Change the per-turn step budget on the live brain (hot-applied from

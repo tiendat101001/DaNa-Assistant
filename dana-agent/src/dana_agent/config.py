@@ -14,8 +14,9 @@ App settings use ``DANA_`` prefix with ``__`` for nesting, e.g.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import (
@@ -56,7 +57,22 @@ class WakeConfig(ProviderConfig):
     inactivity_timeout_s: float = Field(default=30.0, gt=0.0)
 
 
-class STTConfig(ProviderConfig):
+class LocalModelFields(BaseModel):
+    """Shared knobs for self-hosted, on-box model runtimes (LiteRT, Piper,
+    faster-whisper, ...). Ignored by cloud providers.
+
+    ``model`` (on the owning config) names the model: for ``litert`` it is a
+    model-registry id (a HuggingFace repo id such as
+    ``litert-community/whisper-tiny``) resolved under ``models.models_dir``;
+    ``model_path`` overrides that with an explicit local file/directory.
+    """
+
+    backend: Literal["cpu", "webgpu"] = "cpu"
+    num_threads: int = Field(default=4, ge=1, le=64)
+    model_path: str | None = None
+
+
+class STTConfig(ProviderConfig, LocalModelFields):
     model: str = "mock-stt"
     language_code: str = "en"  # propagated from AppConfig.language by _apply_standard_api_keys
 
@@ -64,9 +80,21 @@ class STTConfig(ProviderConfig):
 class LLMConfig(ProviderConfig):
     model: str = "mock-llm"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    # --- latency knobs (None = provider default, nothing sent) ---
+    # Cap reply length: voice replies are short; fewer tokens = earlier end.
+    max_tokens: int | None = Field(default=None, gt=0)
+    # Gemini 2.5 "thinking" adds hundreds of ms before the first token; 0 turns
+    # it off (Flash / Flash-Lite). Ignored by non-Gemini providers.
+    thinking_budget: int | None = Field(default=None, ge=-1)
+    # OpenAI reasoning models (gpt-5*, o*): "minimal" = fastest first token.
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    # Request timeout (s) so a stalled endpoint fails fast instead of hanging a turn.
+    timeout_s: float | None = Field(default=None, gt=0)
+    # Escape hatch: extra kwargs passed straight to init_chat_model.
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
-class TTSConfig(ProviderConfig):
+class TTSConfig(ProviderConfig, LocalModelFields):
     model: str = "mock-tts"
     voice: str = "default"
     language_code: str = "en"  # propagated from AppConfig.language
@@ -80,6 +108,26 @@ class TTSConfig(ProviderConfig):
 class S2SConfig(ProviderConfig):
     model: str = "mock-s2s"
     voice: str = "default"
+
+
+class LatencyConfig(BaseModel):
+    """Realtime budget knobs. Target: first audio < ``target_first_audio_ms``
+    after the user stops speaking (end-of-speech -> first TTS byte)."""
+
+    target_first_audio_ms: int = Field(default=600, gt=0)
+    # Silence that ends an utterance (Pipecat 1.7 VADParams default: 0.2 s).
+    # Every 100 ms here is 100 ms of first-audio latency; raise it only if users
+    # get cut off mid-sentence.
+    vad_stop_secs: float = Field(default=0.2, ge=0.05, le=3.0)
+    vad_start_secs: float = Field(default=0.2, ge=0.05, le=2.0)
+    vad_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Eager first TTS chunk: flush the first clause (at , ; : - or a sentence
+    # end) as soon as it holds >= this many chars, instead of waiting for a full
+    # sentence. 0 disables eager flushing (sentence-level only).
+    tts_first_chunk_min_chars: int = Field(default=20, ge=0)
+    # Pre-warm providers (load local models, open HTTP connections, one tiny
+    # LLM call) at startup so the first real turn doesn't pay cold-start cost.
+    warmup_on_start: bool = True
 
 
 # --- grouped configs -----------------------------------------------------
@@ -98,6 +146,35 @@ class ConversationConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     tts: TTSConfig = TTSConfig()
     s2s: S2SConfig = S2SConfig()
+    latency: LatencyConfig = LatencyConfig()
+
+
+class MCPServerConfig(BaseModel):
+    """One Model Context Protocol server whose tools DaNa may call (gated)."""
+
+    name: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_-]+$")
+    enabled: bool = True
+    transport: Literal["stdio", "streamable_http", "sse"] = "stdio"
+    # stdio transport
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    # http transports
+    url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    # Optional allowlist of tool names (empty = all tools the server lists).
+    allowed_tools: list[str] = Field(default_factory=list)
+    # Trust: "annotations" = honour readOnlyHint/destructiveHint from the server;
+    # "confirm_all" = treat every tool as destructive (always ask first).
+    trust: Literal["annotations", "confirm_all"] = "annotations"
+
+    @model_validator(mode="after")
+    def _check_transport(self) -> MCPServerConfig:
+        if self.transport == "stdio" and not self.command:
+            raise ValueError(f"mcp server {self.name!r}: stdio transport needs 'command'")
+        if self.transport != "stdio" and not self.url:
+            raise ValueError(f"mcp server {self.name!r}: {self.transport} transport needs 'url'")
+        return self
 
 
 class ActionsConfig(ProviderConfig):
@@ -136,6 +213,15 @@ class ActionsConfig(ProviderConfig):
     # Durable append-only JSONL sink for every gate decision/execution.
     audit_path: str = ".dana/audit.jsonl"
 
+    # --- generic computer use ---
+    # User-defined site search engines: name -> URL template containing "{q}",
+    # e.g. {"shopee": "https://shopee.vn/search?keyword={q}"}. Merged over the
+    # built-ins so any (allowlisted) site is searchable without code changes.
+    search_engines: dict[str, str] = Field(default_factory=dict)
+    # Plug-and-play tool servers (Model Context Protocol). Every MCP tool is
+    # routed through the same ActionGate (classified from its annotations).
+    mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
+
 
 class MemoryConfig(BaseModel):
     """Brain conversation memory (the LangGraph checkpointer).
@@ -157,7 +243,9 @@ class BrainConfig(BaseModel):
         "naturally. Use a tool only when it is needed to act on the user's "
         "browser or computer. When asked about 'this paper', 'bài đang xét', "
         "or what page/article is open, use browser_read_text or browser_get_state "
-        "to inspect the open page first."
+        "to inspect the open page first. On any site or app you don't know, call "
+        "browser_snapshot (or os_ui_snapshot for desktop apps), then act by ref with "
+        "browser_act / os_ui_act; snapshot again after the page changes."
     )
     max_steps: int = Field(default=8, gt=0, le=50)
     memory: MemoryConfig = MemoryConfig()
@@ -185,6 +273,33 @@ class ControlConfig(BaseModel):
     # Directory holding the built dana-ui bundle to serve in production. When it
     # exists the control app mounts it at "/"; in dev the UI runs under Vite.
     ui_dist_dir: str = "../dana-ui/dist"
+
+
+class ModelsConfig(BaseModel):
+    """Self-hosted model registry (HuggingFace Hub -> local disk -> runtime)."""
+
+    hub_endpoint: str = "https://huggingface.co"
+    # Default organisation browsed by the registry (LiteRT community models).
+    hub_author: str = "litert-community"
+    # Read from HF_TOKEN / HUGGING_FACE_HUB_TOKEN when unset. Needed for gated
+    # repos (e.g. Gemma) and higher rate limits. Never logged or returned.
+    hf_token: SecretStr | None = None
+    models_dir: str = ".dana/models"
+    catalog_ttl_s: float = Field(default=600.0, ge=0.0)
+    # Files pulled by default when a request names no explicit file list.
+    default_include: list[str] = Field(
+        default_factory=lambda: [
+            "*.tflite",
+            "*.litertlm",
+            "*.task",
+            "*.json",
+            "*.txt",
+            "*.model",
+            "*.md",
+        ]
+    )
+    max_concurrent_pulls: int = Field(default=2, ge=1, le=8)
+    request_timeout_s: float = Field(default=30.0, gt=0)
 
 
 class PrivacyConfig(BaseModel):
@@ -220,6 +335,7 @@ class AppConfig(BaseSettings):
     conversation: ConversationConfig = ConversationConfig()
     actions: ActionsConfig = ActionsConfig()
     control: ControlConfig = ControlConfig()
+    models: ModelsConfig = ModelsConfig()
     privacy: PrivacyConfig = PrivacyConfig()
 
     @model_validator(mode="after")
@@ -253,8 +369,10 @@ class AppConfig(BaseSettings):
             #   DANA_*__API_KEY  >  keyring  >  plain env / .env
             for name in names:
                 v = resolve_secret(name)
-                if v:
-                    return SecretStr(v)
+                # .strip(): a CRLF .env / `source`d Windows file leaves a trailing
+                # "\r" that breaks auth headers and URLs.
+                if v and v.strip():
+                    return SecretStr(v.strip())
             return None
 
         stt = self.conversation.stt
@@ -289,9 +407,29 @@ class AppConfig(BaseSettings):
                 llm.api_key = _env("OPENAI_API_KEY")
             elif llm.provider == "anthropic":
                 llm.api_key = _env("ANTHROPIC_API_KEY")
+            elif llm.provider == "together":
+                # Together AI (OpenAI-compatible): TG_* names as provided by the
+                # operator, TOGETHER_API_KEY as the vendor-standard fallback.
+                llm.api_key = _env("TG_API_KEY", "TOGETHER_API_KEY")
+            elif llm.provider in ("sglang", "vllm", "openai_compatible", "ollama", "lmstudio"):
+                # Self-hosted OpenAI-compatible servers usually accept any key;
+                # honour an explicit one if the operator set it.
+                llm.api_key = _env("SGLANG_API_KEY", "OPENAI_COMPATIBLE_API_KEY")
+
+        if llm.provider == "together":
+            if llm.base_url is None:
+                llm.base_url = os.environ.get("TG_BASE_URL", "").strip() or None
+            if llm.model in ("", "mock-llm"):
+                llm.model = os.environ.get("TG_MODEL_ID", "").strip() or llm.model
+
+        if not tts.api_key and tts.provider == "openai":
+            tts.api_key = _env("OPENAI_API_KEY")
 
         if not wake.api_key:
             wake.api_key = _env("ASSEMBLYAI_API_KEY")
+
+        if not self.models.hf_token:
+            self.models.hf_token = _env("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_TOKEN")
 
         return self
 

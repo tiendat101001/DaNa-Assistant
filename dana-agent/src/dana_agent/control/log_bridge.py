@@ -39,14 +39,15 @@ def make_log_sink(bus: EventBus) -> Callable[[MutableMapping[str, Any]], None]:
     def sink(event_dict: MutableMapping[str, Any]) -> None:
         event = event_dict.get("event")
         if event == "latency":
-            bus.publish(
-                EventType.LATENCY_SPAN,
-                {
-                    "turn_id": event_dict.get("turn_id"),
-                    "stage": event_dict.get("stage"),
-                    "ms": event_dict.get("ms"),
-                },
-            )
+            span: dict[str, Any] = {
+                "turn_id": event_dict.get("turn_id"),
+                "stage": event_dict.get("stage"),
+                "ms": event_dict.get("ms"),
+            }
+            # Only the headline voice_to_first_audio stage carries a budget flag.
+            if event_dict.get("over_budget") is not None:
+                span["over_budget"] = bool(event_dict["over_budget"])
+            bus.publish(EventType.LATENCY_SPAN, span)
         elif event == "action_audit":
             bus.publish(
                 EventType.AUDIT_ENTRY,
