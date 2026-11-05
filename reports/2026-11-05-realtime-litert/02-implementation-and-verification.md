@@ -138,7 +138,7 @@ then apply the "SGLang Qwen2.5-1.5B" preset and use **Check server**.
 ### 4.1 Backend gate (Team Lead A, final re-run)
 | Gate | Result |
 |---|---|
-| Offline suite `pytest -m 'not live'` | **557 passed, 4 skipped, 0 failed** (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
+| Offline suite `pytest -m 'not live'` | **566 passed, 4 skipped, 0 failed** (final re-run after the latency sprint) (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
 | `ruff check src tests scripts` | clean |
 | `ruff format --check` | clean (157 files) |
 | `mypy` (strict, whole project) | clean except 5 accepted `ctypes.windll` errors in `os_win.py` that only Linux mypy reports (already present before this work) |
@@ -191,7 +191,39 @@ costs ~1 ms. End-to-end went from ≈ 2–4 s to ≈ 1.2 s.
 `business-case.md`).
 
 
-### Closing the remaining gap (ranked by ms saved per effort)
+### 5.2 Latency sprint (Team Lead A, after the first measurement)
+
+**LLM sweep on Together.** Measured through the real `Brain` with 26 tools bound,
+max_tokens 80, reasoning off, warm median of 3. Of ~60 listed chat models, 20 are
+serverless for this key. Several small "Turbo" models are not serverless here
+(403 / non-serverless).
+
+| Model | TTFT ms (min / max) | Vietnamese |
+|---|---|---|
+| **deepseek-ai/DeepSeek-V4.1-Flash** (configured) | **431** (403 / 453) | good |
+| together/Tev1-4B-experimental | 527 (477 / 612) | poor (truncated / refuses) |
+| nvidia/NVIDIA-Nemotron-3.5-Super-VL | 530 (505 / 657) | fair (hallucinated an action) |
+| deepseek-ai/DeepSeek-V4.1-Flash-1017 | 532 (435 / 571) | good |
+| Qwen/Qwen3.5-9B | 590 (531 / 749) | good |
+| zai-org/GLM-5.3-Flash | 658 (633 / 980) | empty reply at 80 tokens |
+| MiniMaxAI/MiniMax-M3.1-Flash | 666 (588 / 874) | good |
+| meta-models/Muse-Glimmer-30B | 817 (507 / 861) | empty reply |
+| openai/gpt-oss-120b | 4126 | n/a |
+
+**Decision:** keep DeepSeek-V4.1-Flash. The plain probe sits at ~370–450 ms, which
+appears to be the network round-trip floor from this container. A local GPU LLM
+(SGLang) is the only way below it.
+
+**Opt-in instant acknowledgement** (`conversation.latency.ack_enabled`, default
+**off**). At warm-up, the active TTS synthesises `ack_phrases[lang]` ("Mm-hm." /
+"Dạ.") once and caches it. At end-of-speech in an active voice turn, the cached
+audio plays immediately. Too-short or too-quiet speech gets no ack, and typed
+turns never do. It is logged as `ack_first_audio`, while `voice_to_first_audio`
+keeps measuring the *real* reply, so the metric stays honest. **Perceived first
+audio ≈ 220 ms** (200 ms VAD stop + one 20 ms frame). The real reply still lands
+at ≈ 1.2 s with Moonshine on this container. Covered by `tests/test_latency_ack.py`.
+
+### 5.3 Closing the remaining gap (ranked by ms saved per effort)
 | # | Lever | Expected saving | Effort | Notes |
 |---|---|---|---|---|
 | 1 | **Incremental STT**: run Moonshine on ≤1–2 s windows *during* speech, so only the tail remains at end-of-speech | −150…−250 ms | M | encode ≈ 30 ms/window; reuse `ProviderSTTProcessor`'s ring buffer |

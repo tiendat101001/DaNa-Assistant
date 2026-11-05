@@ -20,14 +20,18 @@ plug-and-play computer use instead of hard-coded sites, and a mobile plan.
      ~1 s before we found and clamped 0.8 s of model-generated leading silence.
    - **Vietnamese TTS:** Piper (no Vietnamese LiteRT TTS exists in the org).
 3. **The LLM is tuned and measured live.** Together DeepSeek-V4.1-Flash with
-   reasoning off has a warm TTFT of **~375 ms** (cold: 7.5 s, which is why DaNa
-   now warms the LLM at session start). SGLang, vLLM, OpenAI, Gemini and Together
-   are one-click presets with a live "Measure latency" probe.
-4. **Honest latency status:** measured legs add up to ≈ **1.1 s** on this 4-vCPU
-   container (vs ≈ 2–4 s before). That is a 2–4× improvement, but not yet
-   < 0.6 s. The remaining ~500 ms has a concrete plan: incremental STT while the
-   user speaks, a local GPU LLM via SGLang, and a speculative first clause. See
-   `02-…` §5.
+   reasoning off has a warm TTFT of **~375 ms plain and 431 ms with DaNa's 26 tools
+   bound** (cold: 7.5 s, which is why DaNa now warms the LLM at session start).
+   A sweep of all 20 serverless Together models available to this key confirmed
+   it is the fastest one with good Vietnamese. SGLang, vLLM, OpenAI, Gemini and
+   Together are one-click presets with a live "Measure latency" probe.
+4. **Honest latency status:** the measured real-component bench gives
+   **≈ 1.19 s** voice → first *reply* audio on this 4-vCPU container (VAD 200 +
+   Moonshine 423 + LLM 426 + Kitten 138), vs ≈ 2–4 s before. That is a 2–3×
+   improvement, but the reply is not yet < 0.6 s. With the new opt-in **instant
+   acknowledgement**, the user hears DaNa at **≈ 220 ms**. The remaining gap has a
+   ranked plan: incremental STT while the user speaks, a local GPU LLM via SGLang,
+   prefix caching, and a faster CPU. See `02-…` §5.
 5. **Model registry:** browse the 443-repo catalog, see file recommendations
    (NPU variants filtered out; multi-stage models complete; tokenizer companions
    added), and **pull + load in one request**. Verified live against
