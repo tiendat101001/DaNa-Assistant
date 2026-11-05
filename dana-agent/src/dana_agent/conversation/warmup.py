@@ -67,3 +67,42 @@ async def warmup_stack(stack: AssembledStack, cfg: AppConfig) -> dict[str, float
         return {}
     results = await asyncio.gather(*(_timed(n, f) for n, f in steps))
     return dict(results)
+
+
+async def keepalive_ping(model: Any) -> str:
+    """One token-free ping on the connection pool the model itself uses.
+
+    OpenAI-compatible LangChain models expose ``root_async_client`` (an
+    ``openai.AsyncOpenAI``); ``models.list()`` is a cheap authenticated GET over
+    the same httpx pool, which keeps the TLS connection warm without spending
+    tokens. Returns ``"ping"``, ``"warmup"`` (fallback: a 1-token completion,
+    which DOES cost a few tokens per call) or ``"failed"``. Never raises.
+    """
+    client = getattr(model, "root_async_client", None)
+    lister = getattr(getattr(client, "models", None), "list", None)
+    try:
+        if callable(lister):
+            await asyncio.wait_for(lister(), timeout=8.0)
+            return "ping"
+        from dana_agent.brain.model import warmup_chat_model  # noqa: PLC0415
+
+        return "warmup" if await warmup_chat_model(model) >= 0 else "failed"
+    except Exception as exc:  # noqa: BLE001 - keepalive is best-effort
+        log.debug("keepalive_failed", exc=str(exc)[:120])
+        return "failed"
+
+
+async def keepalive_loop(stack: AssembledStack, interval_s: float) -> None:
+    """Re-warm the LLM connection every ``interval_s`` until cancelled."""
+    model = _brain_model(stack)
+    if model is None or interval_s <= 0:
+        return
+    log.info("keepalive_started", interval_s=interval_s)
+    try:
+        while True:
+            await asyncio.sleep(interval_s)
+            how = await keepalive_ping(model)
+            log.debug("keepalive", how=how)
+    except asyncio.CancelledError:
+        log.info("keepalive_stopped")
+        raise

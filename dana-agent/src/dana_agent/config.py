@@ -131,6 +131,13 @@ class LatencyConfig(BaseModel):
     # Instant acknowledgement (opt-in): at end of speech, play a cached short
     # phrase ("Mm-hm.") from the active TTS so the user hears the bot right
     # away while STT/LLM run. Synthesized once per language at startup.
+    # Keep the LLM connection warm: ping the endpoint every N seconds while a
+    # session runs (token-free models.list() on OpenAI-compatible clients).
+    # 0 = off.
+    keepalive_s: float = Field(default=0.0, ge=0.0)
+    # Speculative STT: start transcribing as soon as ~60 ms of silence follows
+    # speech, reuse the result if the VAD then confirms end-of-speech.
+    speculative_stt: bool = False
     ack_enabled: bool = False
     ack_phrases: dict[str, str] = Field(default_factory=lambda: {"en": "Mm-hm.", "vi": "Dạ."})
 

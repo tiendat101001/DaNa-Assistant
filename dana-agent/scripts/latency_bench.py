@@ -287,6 +287,18 @@ async def main() -> None:
                 stages = {"VAD stop": a.vad_stop_ms, "STT": v, "LLM TTFT": llm, "TTS": tts}
                 top = max(stages, key=lambda x: stages[x])
                 print(f"- Dominant stage with {k}: **{top}** ({stages[top]:.0f} ms)")
+    if llm is not None and tts is not None:
+        for k, v in best.items():
+            if k.startswith("STT"):
+                # Speculative STT hides (vad_stop - onset) of the STT run behind the
+                # VAD silence wait; it can't go below 0.
+                saved = min(v, max(0.0, a.vad_stop_ms - 60))
+                tot = a.vad_stop_ms + (v - saved) + llm + tts
+                print(
+                    f"- Projected with speculative STT (60 ms onset) + keepalive (no cold LLM "
+                    f"connection) + {k}: {tot:.0f} ms (STT {v:.0f} -> {v - saved:.0f}); "
+                    f"{'OK' if tot <= a.budget_ms else f'OVER by {tot - a.budget_ms:.0f}'}"
+                )
     print(
         f"- Projected perceived first audio with ack = {a.vad_stop_ms:.0f} ms VAD stop "
         "+ ~20 ms (1 frame) = "

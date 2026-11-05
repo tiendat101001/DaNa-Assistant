@@ -111,7 +111,12 @@ def _build_stt_service(
     # STTProvider ABC with VAD-segmented utterances.
     if stack.stt is None:
         raise ValueError(f"STT provider '{provider}' is not set on the stack")
-    return ProviderSTTProcessor(stack.stt, sample_rate=_STT_SAMPLE_RATE, clock=clock)
+    return ProviderSTTProcessor(
+        stack.stt,
+        sample_rate=_STT_SAMPLE_RATE,
+        clock=clock,
+        speculative=cfg.conversation.latency.speculative_stt,
+    )
 
 
 def _build_tts_service(cfg: AppConfig, stack: AssembledStack) -> FrameProcessor:

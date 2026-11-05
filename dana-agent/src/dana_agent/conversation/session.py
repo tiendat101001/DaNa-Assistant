@@ -37,7 +37,7 @@ from dana_agent.conversation.ack import AckAudioRawFrame, AckCache
 from dana_agent.conversation.latency import TurnClock
 from dana_agent.conversation.pipeline import build_cascade_pipeline, build_s2s_pipeline
 from dana_agent.conversation.processors import WakeGateProcessor
-from dana_agent.conversation.warmup import warmup_stack
+from dana_agent.conversation.warmup import keepalive_loop, warmup_stack
 from dana_agent.observability import get_logger
 
 if TYPE_CHECKING:
@@ -173,9 +173,16 @@ class ConversationSession:
             bypass_wake=self._bypass_wake_gate,
         )
 
+        keepalive: asyncio.Task[None] | None = None
+        if lat.keepalive_s > 0 and self._stack.brain is not None:
+            keepalive = asyncio.ensure_future(keepalive_loop(self._stack, lat.keepalive_s))
+
         try:
             await self._runner.run()
         finally:
+            if keepalive is not None:
+                keepalive.cancel()
+                await asyncio.gather(keepalive, return_exceptions=True)
             self._runner = None
             log.info("session_end", session_id=self._session_id)
 

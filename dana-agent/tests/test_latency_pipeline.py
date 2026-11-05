@@ -289,3 +289,137 @@ async def test_warmup_stack_noop_and_llm(monkeypatch: pytest.MonkeyPatch) -> Non
     res = await warmup_stack(SimpleNamespace(stt=None, brain=brain), SimpleNamespace())  # type: ignore[arg-type]
     assert seen == ["M"] and "llm" in res
     _ = asyncio  # keep import used
+
+
+# --- speculative STT + keepalive ----------------------------------------------
+
+
+def _loud(ms: int = 100) -> InputAudioRawFrame:
+    import struct
+
+    n = 16 * ms
+    return InputAudioRawFrame(
+        audio=struct.pack(f"<{n}h", *([3000] * n)), num_channels=1, sample_rate=16_000
+    )
+
+
+def _quiet(ms: int = 40) -> InputAudioRawFrame:
+    return InputAudioRawFrame(audio=b"\x00\x00" * (16 * ms), num_channels=1, sample_rate=16_000)
+
+
+class CountingSTT(FakeSTT):
+    async def stream(self, audio: AsyncIterator[AudioFrame]) -> AsyncIterator[Transcript]:
+        async for tr in FakeSTT.stream(self, audio):
+            yield tr
+
+
+async def _spec_run(stt: FakeSTT, frames: list[Any], **kw: Any) -> list[Any]:
+    proc = ProviderSTTProcessor(stt, speculative=True, **kw)  # type: ignore[arg-type]
+    out: list[Any] = []
+
+    async def capture(frame: Any, direction: Any = D) -> None:
+        out.append(frame)
+
+    proc.push_frame = capture
+    for f in frames:
+        await proc.process_frame(f, D)
+        await asyncio.sleep(0)  # let a speculative task start
+    await proc.wait_idle()
+    return out
+
+
+async def test_speculative_reuse_runs_provider_once() -> None:
+    stt = FakeSTT()
+    out = await _spec_run(
+        stt,
+        [
+            VADUserStartedSpeakingFrame(),
+            _loud(),
+            _quiet(40),
+            _quiet(40),
+            VADUserStoppedSpeakingFrame(),
+        ],
+    )
+    assert len(stt.calls) == 1  # speculative result reused, not re-run
+    assert [f.text for f in out if type(f) is TranscriptionFrame] == ["xin chào"]
+
+
+async def test_speculative_cancelled_on_resume() -> None:
+    stt = FakeSTT()
+    out = await _spec_run(
+        stt,
+        [
+            VADUserStartedSpeakingFrame(),
+            _loud(),
+            _quiet(80),  # speculation starts
+            _loud(),  # speech resumes -> discard
+            VADUserStoppedSpeakingFrame(),
+        ],
+    )
+    # the final run saw the whole utterance (3 audio frames, not the 2-frame speculative snapshot)
+    assert len(stt.calls[-1]) == 3
+    assert [f.text for f in out if type(f) is TranscriptionFrame] == ["xin chào"]
+
+
+async def test_speculative_disabled_and_error_fallback() -> None:
+    stt = FakeSTT()
+    proc = ProviderSTTProcessor(stt)  # type: ignore[arg-type]
+    await run(
+        proc, [VADUserStartedSpeakingFrame(), _loud(), _quiet(80), VADUserStoppedSpeakingFrame()]
+    )
+    assert len(stt.calls) == 1
+
+    class FlakySTT(FakeSTT):
+        async def stream(self, audio: AsyncIterator[AudioFrame]) -> AsyncIterator[Transcript]:
+            frames = [f async for f in audio]
+            self.calls.append(frames)
+            if len(self.calls) == 1:
+                raise RuntimeError("spec failed")
+            yield Transcript(text="ok", is_final=True)
+
+    flaky = FlakySTT()
+    out = await _spec_run(
+        flaky, [VADUserStartedSpeakingFrame(), _loud(), _quiet(80), VADUserStoppedSpeakingFrame()]
+    )
+    assert len(flaky.calls) == 2  # speculative failed -> normal run
+    assert [f.text for f in out if type(f) is TranscriptionFrame] == ["ok"]
+
+
+async def test_keepalive_ping_uses_models_list_and_fallbacks() -> None:
+    from dana_agent.conversation.warmup import keepalive_ping
+
+    calls: list[str] = []
+
+    class Models:
+        async def list(self) -> None:
+            calls.append("list")
+
+    model = SimpleNamespace(root_async_client=SimpleNamespace(models=Models()))
+    assert await keepalive_ping(model) == "ping" and calls == ["list"]
+
+    class Boom:
+        async def list(self) -> None:
+            raise RuntimeError("net")
+
+    bad = SimpleNamespace(root_async_client=SimpleNamespace(models=Boom()))
+    assert await keepalive_ping(bad) == "failed"
+
+
+async def test_keepalive_loop_pings_and_cancels() -> None:
+    from dana_agent.conversation.warmup import keepalive_loop
+
+    n = {"c": 0}
+
+    class Models:
+        async def list(self) -> None:
+            n["c"] += 1
+
+    brain = SimpleNamespace(
+        model=SimpleNamespace(root_async_client=SimpleNamespace(models=Models()))
+    )
+    task = asyncio.ensure_future(keepalive_loop(SimpleNamespace(brain=brain), 0.01))  # type: ignore[arg-type]
+    await asyncio.sleep(0.08)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert n["c"] >= 2

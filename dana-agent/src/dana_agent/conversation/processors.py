@@ -63,7 +63,7 @@ from dana_agent.brain.events import ConfirmationRequired, TokenDelta
 from dana_agent.conversation.mute import BotSpeakingGate, MicGate
 from dana_agent.observability import get_logger
 from dana_agent.providers.base import S2SProvider, STTProvider, TTSProvider
-from dana_agent.types import AudioFrame
+from dana_agent.types import AudioFrame, Transcript
 
 if TYPE_CHECKING:
     from dana_agent.conversation.latency import TurnClock
@@ -648,6 +648,8 @@ class S2SProcessor(FrameProcessor):  # type: ignore[misc]
 
 _MAX_UTTERANCE_S = 30.0
 _PREROLL_S = 0.3
+_SPEC_ONSET_MS = 60
+_SPEC_SPEECH_RMS = 150.0
 
 
 class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
@@ -672,11 +674,20 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
         preroll_s: float = _PREROLL_S,
         max_utterance_s: float = _MAX_UTTERANCE_S,
         clock: TurnClock | None = None,
+        speculative: bool = False,
+        onset_ms: int = _SPEC_ONSET_MS,
+        speech_rms: float = _SPEC_SPEECH_RMS,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self._provider = provider
         self._sample_rate = sample_rate
+        # --- speculative STT (opt-in) ---
+        self._speculative = speculative
+        self._onset_bytes = int(onset_ms / 1000 * sample_rate) * 2
+        self._speech_rms = speech_rms
+        self._low_bytes = 0
+        self._spec_task: asyncio.Task[list[Transcript]] | None = None
         self._preroll_bytes = int(preroll_s * sample_rate) * 2
         self._max_bytes = int(max_utterance_s * sample_rate) * 2
         self._clock = clock
@@ -696,16 +707,19 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
             self._utterance = list(self._preroll)
             self._utt_len = self._preroll_len
             self._truncated = False
+            self._reset_spec()
             self._preroll.clear()
             self._preroll_len = 0
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             if self._utterance:
                 frames, self._utterance = self._utterance, None
-                task = asyncio.ensure_future(self._transcribe(frames))
+                spec, self._spec_task = self._spec_task, None
+                task = asyncio.ensure_future(self._transcribe(frames, spec))
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
             else:
                 self._utterance = None
+                self._reset_spec()
         elif isinstance(frame, CancelFrame):
             await self._cancel_tasks()
         elif isinstance(frame, EndFrame):
@@ -721,11 +735,46 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
                 return
             self._utterance.append(frame)
             self._utt_len += len(frame.audio)
+            if self._speculative:
+                self._track_energy(frame)
             return
         self._preroll.append(frame)
         self._preroll_len += len(frame.audio)
         while self._preroll_len > self._preroll_bytes and len(self._preroll) > 1:
             self._preroll_len -= len(self._preroll.popleft().audio)
+
+    def _reset_spec(self) -> None:
+        self._low_bytes = 0
+        if self._spec_task is not None:
+            self._spec_task.cancel()
+            self._spec_task = None
+
+    def _track_energy(self, frame: InputAudioRawFrame) -> None:
+        """Speculative STT: after ``onset_ms`` of low energy start transcribing
+        what we have; if speech resumes, cancel and discard."""
+        from dana_agent.conversation.ack import _rms  # noqa: PLC0415
+
+        if _rms(frame.audio) >= self._speech_rms:
+            self._reset_spec()
+            return
+        self._low_bytes += len(frame.audio)
+        if self._spec_task is None and self._low_bytes >= self._onset_bytes and self._utterance:
+            snapshot = list(self._utterance)
+            self._spec_task = asyncio.ensure_future(self._collect(snapshot))
+
+    async def _collect(self, frames: list[InputAudioRawFrame]) -> list[Transcript]:
+        return [tr async for tr in self._provider.stream(self._audio_iter(frames))]
+
+    def _audio_iter(self, frames: list[InputAudioRawFrame]) -> AsyncIterator[AudioFrame]:
+        async def gen() -> AsyncIterator[AudioFrame]:
+            for f in frames:
+                yield AudioFrame(
+                    pcm=f.audio,
+                    sample_rate=f.sample_rate or self._sample_rate,
+                    channels=f.num_channels or 1,
+                )
+
+        return gen()
 
     async def wait_idle(self, wait_s: float | None = None) -> None:
         """Wait for in-flight transcriptions (used on EndFrame and in tests)."""
@@ -737,22 +786,32 @@ class ProviderSTTProcessor(FrameProcessor):  # type: ignore[misc]
             t.cancel()
         await self.wait_idle(wait_s=1.0)
 
-    async def _transcribe(self, frames: list[InputAudioRawFrame]) -> None:
+    async def _transcribe(
+        self,
+        frames: list[InputAudioRawFrame],
+        spec: asyncio.Task[list[Transcript]] | None = None,
+    ) -> None:
         t0 = time.monotonic()
         last_partial = ""
         language = "en"
         got_final = False
 
-        async def audio() -> AsyncIterator[AudioFrame]:
-            for f in frames:
-                yield AudioFrame(
-                    pcm=f.audio,
-                    sample_rate=f.sample_rate or self._sample_rate,
-                    channels=f.num_channels or 1,
-                )
+        async def source() -> AsyncIterator[Transcript]:
+            if spec is not None and not spec.cancelled():
+                try:
+                    for tr in await spec:
+                        yield tr
+                    log.info("stt_speculative_reused")
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - fall back to a normal run
+                    log.warning("stt_speculative_failed", exc=str(exc))
+            async for tr in self._provider.stream(self._audio_iter(frames)):
+                yield tr
 
         try:
-            async for tr in self._provider.stream(audio()):
+            async for tr in source():
                 text = tr.text.strip()
                 language = tr.language or language
                 if not tr.is_final:
