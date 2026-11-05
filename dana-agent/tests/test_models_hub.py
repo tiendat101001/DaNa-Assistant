@@ -154,8 +154,10 @@ class Counter:
                 ],
                 headers={"Link": nxt},
             )
-        if url.path == "/api/models/litert-community/gated":
+        if url.path == "/api/models/litert-community/m1":
             return httpx.Response(401, json={"error": "nope"})
+        if url.path == "/api/models/litert-community/unknown":
+            return httpx.Response(401)
         if url.path == "/api/models/litert-community/missing":
             return httpx.Response(404)
         if url.path == "/api/models/litert-community/whisper-tiny":
@@ -227,7 +229,9 @@ async def test_detail_uses_lfs_size_and_recommends() -> None:
 async def test_errors_mapped() -> None:
     hub = _client(Counter())
     with pytest.raises(HubAuthError, match="HF_TOKEN"):
-        await hub.model_detail("litert-community/gated")
+        await hub.model_detail("litert-community/m1")  # exists in listing -> gated
+    with pytest.raises(ModelNotFoundError):  # anonymous 401 for unknown repo -> 404
+        await hub.model_detail("litert-community/unknown")
     with pytest.raises(ModelNotFoundError):
         await hub.model_detail("litert-community/missing")
 

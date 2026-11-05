@@ -38,7 +38,8 @@ def handler(request: httpx.Request) -> httpx.Response:
                     "downloads": 5,
                     "pipeline_tag": "automatic-speech-recognition",
                     "tags": [],
-                }
+                },
+                {"id": "litert-community/gated", "downloads": 1, "tags": [], "gated": "manual"},
             ],
         )
     if "gated" in p:
