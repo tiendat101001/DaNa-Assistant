@@ -135,7 +135,19 @@ then apply the "SGLang Qwen2.5-1.5B" preset and use **Check server**.
 
 ## 4. Verification evidence
 
-<!-- LEAD_A_GATE -->
+### 4.1 Backend gate (Team Lead A, final re-run)
+| Gate | Result |
+|---|---|
+| Offline suite `pytest -m 'not live'` | **557 passed, 4 skipped, 0 failed** (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
+| `ruff check src tests scripts` | clean |
+| `ruff format --check` | clean (157 files) |
+| `mypy` (strict, whole project) | clean except 5 accepted `ctypes.windll` errors in `os_win.py` that only Linux mypy reports (already present before this work) |
+| Real-model tests (whisper-tiny i8, moonshine-tiny i8, kitten-tts-nano fp16; `DANA_TEST_*` env) | passed |
+| Live HF registry test (`test_models_live.py`: catalog, detail, real pull) | passed |
+
+New offline tests by area: registry ≈ 62, LiteRT runtime/ASR ≈ 18, TTS ≈ 22,
+latency pipeline 25, LLM + MCP 41, generic computer use 36, multi-stage load 2.
+
 <!-- LEAD_B_FLOWS -->
 
 Owner-verified during integration (live, this session):
@@ -153,7 +165,31 @@ Owner-verified during integration (live, this session):
 
 ## 5. Measured latency and the gap-closing plan
 
-<!-- LATENCY_TABLE -->
+### 5.1 Measured (real components, warm, median of 3; 4-vCPU container)
+Produced by `dana-agent/scripts/latency_bench.py`
+(`uv run python scripts/latency_bench.py --runs 3`; reads `TG_*` from env only).
+
+| Stage | Component | median ms (min / max) |
+|---|---|---|
+| End-of-speech | Silero VAD `stop_secs` | 200 (config) |
+| STT | LiteRT **Moonshine-tiny** i8, 3.6 s utterance | **423** (415 / 454) |
+| STT | LiteRT Whisper-tiny i8, 3.6 s utterance | 748 (720 / 761) |
+| LLM TTFT | Together DeepSeek-V4.1-Flash via the real `Brain`, **26 tools bound**, reasoning off, max_tokens 80 | **426** (420 / 435) |
+| LLM TTFT | same model, plain probe (no tools) | 453 (421 / 596) |
+| TTS first chunk | LiteRT **KittenTTS** fp16, 21-char first clause | **138** (131 / 174) |
+| **voice → first audio** | VAD + Moonshine + LLM + Kitten | **≈ 1,187 ms** (budget 600; over by ≈ 590) |
+| voice → first audio | VAD + Whisper + LLM + Kitten | ≈ 1,511 ms |
+
+**Before → after, same leg definitions:** TTS first audio went from ~1 s+ (Gemini TTS; ~1 s for
+Kitten before the silence clamp) to 138 ms. LLM went from ~500 ms–1.5 s (reasoning/thinking
+on; 7.5 s cold) to 426 ms warm with tools bound. STT is now on-box (no network), and silence
+costs ~1 ms. End-to-end went from ≈ 2–4 s to ≈ 1.2 s.
+
+**Accuracy note:** the bench clip is synthetic espeak speech. Moonshine:
+"The low, what is the weather like today in Hanoi?"; Whisper-tiny clipped "Hanoi" →
+"Panor". Real-voice WER still needs measuring on the user's microphone (KPI in
+`business-case.md`).
+
 
 ### Closing the remaining gap (ranked by ms saved per effort)
 | # | Lever | Expected saving | Effort | Notes |

@@ -42,6 +42,16 @@ def _sanitize(text: str) -> str:
     return _UNSAFE.sub("_", text)
 
 
+def _hint(ann: Any, snake: str, camel: str) -> object:
+    """Read an annotation hint under either spelling (mcp 1.x camelCase, 2.x snake_case)."""
+    if ann is None:
+        return None
+    if isinstance(ann, dict):
+        return ann.get(snake, ann.get(camel))
+    value = getattr(ann, snake, None)
+    return value if value is not None else getattr(ann, camel, None)
+
+
 @dataclass(slots=True)
 class _Entry:
     server: MCPServerConfig
@@ -147,9 +157,9 @@ class MCPActions(ActionProvider):
         if entry.server.trust == "confirm_all":
             return Reversibility.DESTRUCTIVE
         ann = getattr(entry.tool, "annotations", None)
-        if ann is not None and getattr(ann, "readOnlyHint", None) is True:
+        if _hint(ann, "read_only_hint", "readOnlyHint") is True:
             return Reversibility.READ_ONLY
-        if ann is not None and getattr(ann, "destructiveHint", None) is False:
+        if _hint(ann, "destructive_hint", "destructiveHint") is False:
             return Reversibility.REVERSIBLE
         return Reversibility.DESTRUCTIVE  # MCP spec default: destructiveHint=true
 

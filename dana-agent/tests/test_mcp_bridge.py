@@ -182,3 +182,21 @@ async def test_connect_failure_isolated(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(MCPActions, "_open", boom)
     await m.connect()
     assert m.tool_specs() == []
+
+
+def test_snake_case_annotations_mcp2() -> None:
+    def t2(name: str, **ann: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            name=name, description="d", inputSchema={}, annotations=SimpleNamespace(**ann)
+        )
+
+    m = make(
+        [
+            t2("ro", read_only_hint=True),
+            t2("rev", destructive_hint=False),
+            t2("dflt", read_only_hint=False, destructive_hint=None),
+        ]
+    )
+    assert cls(m, "mcp_my_srv_ro") is Reversibility.READ_ONLY
+    assert cls(m, "mcp_my_srv_rev") is Reversibility.REVERSIBLE
+    assert cls(m, "mcp_my_srv_dflt") is Reversibility.DESTRUCTIVE
