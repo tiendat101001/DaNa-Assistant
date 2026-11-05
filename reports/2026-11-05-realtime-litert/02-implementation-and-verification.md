@@ -144,7 +144,7 @@ then apply the "SGLang Qwen2.5-1.5B" preset and use **Check server**.
 ### 4.1 Backend gate (Team Lead A, final re-run)
 | Gate | Result |
 |---|---|
-| Offline suite `pytest -m 'not live'` | **586 passed, 4 skipped, 0 failed** (final re-run after both latency sprints and the catalog-classification fix) (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
+| Offline suite `pytest -m 'not live'` | **643 passed, 4 skipped, 0 failed** (Lead A's final run, after the review/QA fix round) | (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
 | `ruff check src tests scripts` | clean |
 | `ruff format --check` | clean (157 files) |
 | `mypy` (strict, whole project) | clean except 5 accepted `ctypes.windll` errors in `os_win.py` that only Linux mypy reports (already present before this work) |
@@ -184,6 +184,16 @@ Bugs found by this gate and fixed by their owners:
 4. **Cold hub fetch (~15 s) showed an empty grid.** A loading status line and
    360 px layout guards were added (UX).
 
+
+### 4.3 Independent review & QA round (9 extra agents, traced by Leads A/B/C)
+| Reviewer | Findings | Outcome |
+|---|---|---|
+| **Security** | 0 high · 2 medium · 6 low | **Fixed:** (M) NFD-decomposed Vietnamese labels ("Xóa", "Đặt hàng") bypassed destructive/purchase detection (probe-proven). Labels are now NFC + casefold + diacritic-stripped, with a wider vocabulary. (M) MCP servers could self-label tools read-only, so the default is now `trust="confirm_all"`, remote servers are always confirm-all unless trust is set explicitly, and tool descriptions are sanitised. (L) repo-id `fullmatch`, revision validation/quoting, pagination/redirects pinned to the hub host and https, `/probe` never forwards a stored key to a new `base_url`, `/health` doesn't follow redirects. **Deferred:** download byte cap when the hub reports size 0; short-lived ticket instead of `?token=` on `/file`. |
+| **Windows compatibility** (static review, 14 items) | 2 high · 5 medium | **Fixed:** LiteRT unload releases the mmapped file (`gc.collect`, `unload_under(model_dir)` before delete/re-pull); `rmtree`/`os.replace` retry on `PermissionError`; a corrupt or locked manifest keeps the last good copy; NTFS-reserved names/characters rejected. **Deferred** (documented in `windows-compat-review.md`): MCP stdio needs the Proactor loop (avoid `--reload`), `npx.cmd`, COM init on the pywinauto thread, `.gitattributes eol=lf` for `.sh`, >260-char paths. |
+| **Pipeline concurrency** (probe-proven) | 3 medium · 1 low | **All fixed, with regression tests:** speculative STT task cancelled on Cancel/End/Interruption; `voice_to_first_audio` kept for early-committed turns; speech after an early commit is transcribed, not dropped; TTS task not orphaned by a double start. **Known limit:** a cancelled speculative LiteRT run holds the interpreter lock until its thread ends. |
+| **QA, registry/API** (~45 live cases + 14 offline tests) | 2 bugs | **Fixed:** an unknown repo returned 403 "gated" (now 404); progress `bytes_done` > `bytes_total` for unknown-size companion files. Everything else passed: 409s, resume after cancel, traversal → 422, auth, task filters, limits. |
+| **QA observation → owner fix** | "Use as ASR/TTS" / LLM provider changes are restart-required and were **dropped**, so the choice was lost at restart | **Fixed:** saved to `.dana/config-overrides.json` and loaded at startup (process env > saved UI choices > `.env` > `dana.toml`; secrets never written; `tests/test_config_overrides.py`). |
+| **Vietnamese path** (real models) | works end to end | Piper `vi_VN-25hours_single-low`: first chunk **86 ms** (RTF 0.09); `vais1000-medium`: 291 ms (better quality). Whisper-tiny vi: 1.2–2.0 s and inaccurate ("DaNa" → "Stanna"). The validator correctly rejects Kitten for vi. See `vietnamese-path.md`. |
 
 Owner-verified during integration (live, this session):
 - **Registry, live HF:** the catalog listed 443 repos. `POST /pull {load:true}` for
