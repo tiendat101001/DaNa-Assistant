@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 import warnings
@@ -31,7 +32,7 @@ RID = "litert-community/whisper-tiny"
 GATE = threading.Event()
 
 
-def handler(request: httpx.Request) -> httpx.Response:
+async def handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
     if p == "/api/models":
         return httpx.Response(200, json=[{"id": RID, "downloads": 5, "tags": []}])
@@ -44,7 +45,9 @@ def handler(request: httpx.Request) -> httpx.Response:
             200, json=[{"type": "file", "path": "w.tflite", "size": 1, "lfs": {"size": len(BLOB)}}]
         )
     if "/resolve/" in p:
-        GATE.wait(5)  # hold downloads open until the test releases them
+        # hold downloads open (without blocking the event loop) until released
+        while not GATE.is_set():  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
     return httpx.Response(200, content=BLOB)
 
 
@@ -60,8 +63,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     app.state.bus = EventBus()
     app.state.control_token = TOKEN
     with TestClient(app) as c:
-        yield c
-    GATE.set()
+        try:
+            yield c
+        finally:
+            GATE.set()  # release held downloads before the app shuts down
 
 
 def _wait(c: TestClient, jid: str) -> dict[str, Any]:
@@ -73,10 +78,17 @@ def _wait(c: TestClient, jid: str) -> dict[str, Any]:
     raise AssertionError("job stuck")
 
 
+def _status(c: TestClient, jid: str) -> str:
+    return str(c.get(f"{M}/jobs/{jid}", headers=AUTH).json()["status"])
+
+
 def test_duplicate_pull_and_delete_while_pulling_409(client: TestClient) -> None:
     r = client.post(f"{M}/pull", headers=AUTH, json={"repo_id": RID})
     assert r.status_code == 202
+    jid = r.json()["job"]["id"]
+    assert _status(client, jid) in ("queued", "running")
     assert client.post(f"{M}/pull", headers=AUTH, json={"repo_id": RID}).status_code == 409
+    assert _status(client, jid) in ("queued", "running")
     assert client.delete(f"{M}/local/{RID}", headers=AUTH).status_code == 409
     GATE.set()
     assert _wait(client, r.json()["job"]["id"])["status"] == "done"

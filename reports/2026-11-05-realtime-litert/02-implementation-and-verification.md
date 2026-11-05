@@ -144,7 +144,7 @@ then apply the "SGLang Qwen2.5-1.5B" preset and use **Check server**.
 ### 4.1 Backend gate (Team Lead A, final re-run)
 | Gate | Result |
 |---|---|
-| Offline suite `pytest -m 'not live'` | **643 passed, 4 skipped, 0 failed** (Lead A's final run, after the review/QA fix round) | (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
+| Offline suite `pytest -m 'not live'` | **646 passed, 4 skipped, 0 failed** (owner's final acceptance run at 14:32 on the delivered tree, after the review/QA fixes and the config-overrides fix) | (58 live deselected; `test_tray` import-guard test deselected: no X display in the container, already failing before this work) |
 | `ruff check src tests scripts` | clean |
 | `ruff format --check` | clean (157 files) |
 | `mypy` (strict, whole project) | clean except 5 accepted `ctypes.windll` errors in `os_win.py` that only Linux mypy reports (already present before this work) |
