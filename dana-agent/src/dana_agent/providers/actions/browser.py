@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -488,15 +489,54 @@ def _clean(text: object, limit: int = _NAME_MAX) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
+_EXTRA_PURCHASE_WORDS = ("purchase", "order", "mua", "mua ngay", "donate", "transfer")
+_EXTRA_DESTRUCTIVE_WORDS = (
+    "xoá",
+    "withdraw",
+    "unsubscribe",
+    "sign out",
+    "log out",
+    "approve",
+    "accept",
+    "đăng xuất",
+)
+
+
+def _strip_marks(text: str) -> str:
+    decomposed = unicodedata.normalize("NFD", text).replace("đ", "d").replace("Đ", "D")
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _label_forms(label: str) -> tuple[str, str]:
+    """(NFC+casefold, diacritic-stripped) variants: NFD-decomposed Vietnamese
+    labels must not dodge the vocabulary."""
+    nfc = unicodedata.normalize("NFC", label).casefold()
+    return nfc, _strip_marks(nfc)
+
+
+def _vocab_forms(words: tuple[str, ...]) -> tuple[str, ...]:
+    out: list[str] = []
+    for w in words:
+        nfc = unicodedata.normalize("NFC", w).casefold()
+        out.extend((nfc, _strip_marks(nfc)))
+    return tuple(dict.fromkeys(out))
+
+
+_PURCHASE_FORMS = _vocab_forms(_PURCHASE_WORDS + _EXTRA_PURCHASE_WORDS)
+_DESTRUCTIVE_FORMS = _vocab_forms(
+    _DESTRUCTIVE_CLICK_WORDS + _EXTRA_DESTRUCTIVE_WORDS + _EXTRA_PURCHASE_WORDS
+)
+
+
 def click_consequence(label: str, *, forbid_purchases: bool) -> Reversibility:
     """Honest consequence of clicking/invoking a control named ``label``.
 
     Shared by ``browser_click``, ``browser_act`` and ``os_ui_act`` so the
     destructive/purchase vocabulary lives in exactly one place."""
-    low = label.lower()
-    if forbid_purchases and any(word in low for word in _PURCHASE_WORDS):
+    forms = _label_forms(label)
+    if forbid_purchases and any(w in f for f in forms for w in _PURCHASE_FORMS):
         return Reversibility.OUT_OF_SCOPE  # purchases forbidden -> refuse
-    if any(word in low for word in _DESTRUCTIVE_CLICK_WORDS):
+    if any(w in f for f in forms for w in _DESTRUCTIVE_FORMS):
         return Reversibility.DESTRUCTIVE  # submit/pay/delete/send -> confirm
     return Reversibility.REVERSIBLE
 

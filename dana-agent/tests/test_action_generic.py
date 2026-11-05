@@ -454,3 +454,21 @@ def test_uia_destructive_vocabulary_vi() -> None:
         {"elements": [{"ref": "u1", "control_type": "Button", "name": "Gửi"}]}
     )
     assert p.classify(act("os_ui_act", ref="u1", action="invoke")) is Reversibility.DESTRUCTIVE
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["Xóa", "Xóa", "Gủỉ", "Ḍắt hàng", "Xoa", "Mua ngay", "Log out"],
+)
+def test_click_consequence_unicode_and_vocab(label: str) -> None:
+    from dana_agent.providers.actions.browser import click_consequence
+
+    assert click_consequence(label, forbid_purchases=False) is Reversibility.DESTRUCTIVE
+
+
+def test_nfd_purchase_label_forbidden() -> None:
+    from dana_agent.providers.actions.browser import click_consequence
+
+    nfd = "Ḍắt hàng"
+    assert click_consequence(nfd, forbid_purchases=True) is Reversibility.OUT_OF_SCOPE
+    assert click_consequence("Search", forbid_purchases=True) is Reversibility.REVERSIBLE

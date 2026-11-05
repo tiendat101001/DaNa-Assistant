@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 import uuid
 from collections.abc import Callable
@@ -22,7 +21,12 @@ from dana_agent.models.errors import (
     ModelNotFoundError,
     ModelsError,
 )
-from dana_agent.models.store import resolve_in_model_dir, safe_relpath, validate_repo_id
+from dana_agent.models.store import (
+    replace_retry,
+    resolve_in_model_dir,
+    safe_relpath,
+    validate_repo_id,
+)
 from dana_agent.observability import get_logger
 
 log = get_logger(__name__)
@@ -143,8 +147,12 @@ class Downloader:
                         )
                         dest.parent.mkdir(parents=True, exist_ok=True)
 
-                        def bump(n: int) -> None:
+                        unknown_size = not int(f.get("size") or 0)
+
+                        def bump(n: int, grow: bool = unknown_size) -> None:
                             job.bytes_done += n
+                            if grow:  # size unknown up front: grow the total
+                                job.bytes_total += n
                             if on_update:
                                 on_update()
 
@@ -207,7 +215,7 @@ class Downloader:
             offset = 0
         if expected and offset == expected:
             bump(offset)
-            os.replace(part, dest)
+            await asyncio.to_thread(replace_retry, part, dest)
             return
 
         for attempt in range(2):
@@ -238,7 +246,7 @@ class Downloader:
                     raise HubUnavailableError(
                         f"incomplete download of {dest.name}: {written}/{expected} bytes"
                     )
-                os.replace(part, dest)
+                await asyncio.to_thread(replace_retry, part, dest)
                 return
             finally:
                 await resp.aclose()

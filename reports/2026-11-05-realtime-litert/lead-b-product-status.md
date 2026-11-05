@@ -14,7 +14,16 @@
 ## Review & QA round
 | Finding | Sev | Owner | Status |
 |---|---|---|---|
-| QA1: unknown repo -> 403 "gated" instead of 404 (anonymous HF 401 ambiguous) | medium | C1 | routed, fixing |
+| QA1 unknown repo -> 403 instead of 404 | med | C1 | routed |
+| QA2 PullJob bytes_done > bytes_total (companions) | low-med | C1 | routed |
+| WIN1 rmtree ignore_errors on mmapped files; os.replace retry; safe_relpath reserved names/ADS; store._read PermissionError wipes registry | med | C1 | routed |
+| WIN2 litert close must release mmap | med | C2 | FIXED (close()+gc, unload_under) |
+| WIN3 .gitattributes eol=lf for .sh | low | Lead B | FIXED (.gitattributes added) |
+| SEC1 click_consequence NFD Vietnamese / vocab bypass | med | C6 | routed |
+| SEC2 MCP annotations trusted from remote servers; unfenced descriptions | med | C5 | routed |
+| SEC3 probe sends stored api_key to overlay base_url | low-med | C5 | routed |
+| SEC4 _REPO_RE fullmatch; revision unvalidated; Link:next host; https-only redirects | low | C1 | routed (quick ones) |
 
 ## Deferred
-(none yet)
+- pull.py max_bytes cap vs hostile repo (low; needs cfg field = lead's config.py, risky before 14:30).
+- /models/file ?token= uses long-lived control token in URL (low; needs HMAC ticket, UI+API change).

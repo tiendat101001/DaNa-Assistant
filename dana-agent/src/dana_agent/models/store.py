@@ -16,6 +16,29 @@ from dana_agent.models.errors import ModelInputError
 _REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
+_WIN_BAD_CHARS = re.compile(r'[<>:"|?*\x00-\x1f]')
+_WIN_RESERVED = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def replace_retry(src: str | Path, dst: str | Path, attempts: int = 5) -> None:
+    """``os.replace`` with backoff: on Windows AV/indexers briefly lock files."""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * 2**i)
+
+
 def validate_repo_id(repo_id: str) -> str:
     """Return ``repo_id`` if it is a well-formed ``org/name`` id, else raise."""
     if not isinstance(repo_id, str) or not _REPO_RE.match(repo_id) or ".." in repo_id:
@@ -33,6 +56,15 @@ def safe_relpath(path: str) -> PurePosixPath:
     parts = path.split("/")
     if any(p in ("", ".", "..") for p in parts):
         raise ModelInputError(f"unsafe file path {path!r}")
+    # Windows: reserved chars (':' also creates NTFS alternate streams), control
+    # chars, trailing dot/space, and reserved device names.
+    for part in parts:
+        if (
+            _WIN_BAD_CHARS.search(part)
+            or part[-1] in ". "
+            or part.split(".", 1)[0].upper() in _WIN_RESERVED
+        ):
+            raise ModelInputError(f"unsafe file path {path!r}")
     return PurePosixPath(*parts)
 
 
@@ -90,24 +122,35 @@ class ModelStore:
     def __init__(self, models_dir: str | Path) -> None:
         self.models_dir = Path(models_dir)
         self._lock = threading.Lock()
+        self._last_good: dict[str, dict[str, Any]] | None = None
 
     @property
     def manifest_path(self) -> Path:
         return self.models_dir / "registry.json"
 
     def _read(self) -> dict[str, dict[str, Any]]:
+        # Missing file means an empty registry. Any other failure must not look
+        # empty (the next write would wipe the registry): fall back to the last
+        # good copy, else raise.
         try:
             raw = json.loads(self.manifest_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+        except FileNotFoundError:
             return {}
+        except (OSError, json.JSONDecodeError):
+            if self._last_good is not None:
+                return dict(self._last_good)
+            raise
         models = raw.get("models") if isinstance(raw, dict) else None
-        return models if isinstance(models, dict) else {}
+        out: dict[str, dict[str, Any]] = models if isinstance(models, dict) else {}
+        self._last_good = dict(out)
+        return out
 
     def _write(self, models: dict[str, dict[str, Any]]) -> None:
         self.models_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.manifest_path.with_name(self.manifest_path.name + ".tmp")
         tmp.write_text(json.dumps({"version": 1, "models": models}, indent=2), encoding="utf-8")
-        os.replace(tmp, self.manifest_path)
+        replace_retry(tmp, self.manifest_path)
+        self._last_good = dict(models)
 
     def all(self) -> list[ModelRecord]:
         with self._lock:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import gc
 import shutil
 from pathlib import Path
 from typing import Any, Protocol
@@ -312,7 +313,16 @@ class ModelManager:
             raise ModelNotFoundError(f"model {repo_id!r} is not pulled")
         if repo_id in self._loaded:
             await self.unload(repo_id)
-        shutil.rmtree(model_dir(self.cfg.models_dir, repo_id), ignore_errors=True)
+        target = model_dir(self.cfg.models_dir, repo_id)
+        for attempt in range(5):
+            # Windows keeps mmapped .tflite files locked until released.
+            gc.collect()
+            await asyncio.to_thread(shutil.rmtree, target, True)
+            if not target.exists():
+                break
+            await asyncio.sleep(0.1 * (attempt + 1))
+        else:
+            raise ModelBusyError(f"could not remove {repo_id}: files are in use")
         self.store.remove(repo_id)
 
     # --- files --------------------------------------------------------

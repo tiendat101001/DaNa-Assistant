@@ -243,3 +243,49 @@ async def test_manager_cancel_job(tmp_path: Path) -> None:
     assert rec is not None and rec.status == "failed"
     # Partial file kept for resume.
     assert (model_dir(tmp_path, "org/m") / "a.json.part").exists()
+
+
+async def test_unknown_size_files_grow_total(tmp_path: Path) -> None:
+    job = new_job("org/m")
+    files = [{"path": "a.bin", "size": len(BLOB)}, {"path": "tok.json", "size": 0}]
+    await _downloader(Server()).run(job, files, tmp_path)
+    assert job.status == "done" and job.bytes_done == job.bytes_total == 2 * len(BLOB)
+
+
+@pytest.mark.parametrize(
+    "bad", ["a:b", "con", "NUL.txt", "dir/aux.bin", "x.", "x ", "a<b", 'a"b', "a|b", "a?b", "a*b"]
+)
+def test_windows_unsafe_names_rejected(bad: str) -> None:
+    with pytest.raises(ModelInputError):
+        safe_relpath(bad)
+
+
+def test_store_does_not_wipe_on_read_error(tmp_path: Path) -> None:
+    from dana_agent.models.store import ModelRecord
+
+    store = ModelStore(tmp_path)
+    store.put(ModelRecord(id="a/b"))
+    store.manifest_path.write_text("{corrupt", encoding="utf-8")
+    assert [r.id for r in store.all()] == ["a/b"]  # last-good, not empty
+    fresh = ModelStore(tmp_path)
+    with pytest.raises(ValueError):
+        fresh.all()
+
+
+async def test_delete_busy_keeps_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+
+    mgr = ModelManager(ModelsConfig(models_dir=str(tmp_path)), cache=FakeCache())
+    from dana_agent.models.store import ModelRecord
+
+    mgr.store.put(ModelRecord(id="a/b", status="ready"))
+    (model_dir(tmp_path, "a/b")).mkdir(parents=True)
+    monkeypatch.setattr(shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(asyncio, "sleep", lambda *_: _noop())
+    with pytest.raises(ModelBusyError):
+        await mgr.delete("a/b")
+    assert mgr.store.get("a/b") is not None
+
+
+async def _noop() -> None:
+    return None
