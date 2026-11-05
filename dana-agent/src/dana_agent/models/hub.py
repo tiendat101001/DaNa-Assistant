@@ -42,23 +42,51 @@ _KEYWORDS = (
     ("tts", ("tts", "piper", "kokoro", "vits", "melo")),
     (
         "llm",
-        ("gemma", "qwen", "llama", "phi", "smol", "deepseek", "mistral", "tinyllama"),
+        ("gemma", "qwen", "llama", "phi", "smol", "smollm", "deepseek", "mistral", "tinyllama"),
     ),
 )
 _FORMATS = {".tflite": "tflite", ".litertlm": "litertlm", ".task": "task"}
 
 
+_VISION_TAGS = {
+    "depth-estimation",
+    "keypoint-detection",
+    "mask-generation",
+    "object-detection",
+    "text-to-image",
+    "text-to-video",
+    "unconditional-image-generation",
+    "zero-shot-object-detection",
+    "zero-shot-image-classification",
+    "image-to-3d",
+    "visual-question-answering",
+    "document-question-answering",
+    "robotics",
+}
+
+
+def _token_match(tokens: set[str], word: str) -> bool:
+    """Whole-token match, allowing a version suffix (``qwen2``, ``phi3``)."""
+    pat = re.compile(rf"{re.escape(word)}(\d.*)?")
+    return any(pat.fullmatch(t) for t in tokens)
+
+
 def classify_task(pipeline_tag: str | None, tags: list[str], name: str) -> str:
-    if pipeline_tag:
+    if pipeline_tag and pipeline_tag != "any-to-any":
         if pipeline_tag.startswith("audio-") or pipeline_tag == "voice-activity-detection":
             return "audio"
         if pipeline_tag in _PIPELINE_TASKS:
             return _PIPELINE_TASKS[pipeline_tag]
-        if pipeline_tag.startswith("image-"):
+        if (
+            pipeline_tag.startswith(("image-", "video-"))
+            or "image" in pipeline_tag
+            or pipeline_tag in _VISION_TAGS
+        ):
             return "vision"
-    haystack = " ".join([name, *tags]).lower()
+        return "other"  # other tagged pipelines (text-classification, ...)
+    tokens = {t for t in re.split(r"[^a-z0-9]+", " ".join([name, *tags]).lower()) if t}
     for task, words in _KEYWORDS:
-        if any(re.search(rf"(?<![a-z]){re.escape(w)}", haystack) for w in words):
+        if any(_token_match(tokens, w) for w in words):
             return task
     return "other"
 

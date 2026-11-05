@@ -242,3 +242,37 @@ async def test_errors_mapped() -> None:
     )
     with pytest.raises(HubUnavailableError):
         await err.list_models()
+
+
+@pytest.mark.parametrize(
+    ("repo", "tag", "tags", "expected"),
+    [
+        ("litert-community/MoGe-2-LiteRT", "depth-estimation", ["litert", "depth"], "vision"),
+        ("litert-community/MiDaS-small", "depth-estimation", [], "vision"),
+        ("litert-community/RTMPose-s-LiteRT", "keypoint-detection", [], "vision"),
+        ("litert-community/SAM2.1-Hiera-Tiny", "mask-generation", [], "vision"),
+        ("litert-community/MoViNet-A0", "video-classification", [], "vision"),
+        ("litert-community/FLUX.2-klein-4B", "text-to-image", [], "vision"),
+        ("litert-community/Kokoro-82M", "text-to-speech", [], "tts"),
+        ("litert-community/whisper-tiny", "automatic-speech-recognition", [], "asr"),
+        ("litert-community/kitten-tts-nano-0.8", "text-to-speech", [], "tts"),
+        ("litert-community/SmolVLM2-500M", "image-text-to-text", [], "llm"),
+        ("litert-community/gemma-4-E2B-it-litert-lm", None, ["litert-lm"], "llm"),
+        ("litert-community/Qwen3-0.6B", None, [], "llm"),
+        ("litert-community/PP-OCRv5-LiteRT", None, [], "other"),
+        ("litert-community/Test", None, [], "other"),
+    ],
+)
+def test_classify_real_catalog_entries(
+    repo: str, tag: str | None, tags: list[str], expected: str
+) -> None:
+    from dana_agent.models.hub import hub_model
+
+    item = {"id": repo, "pipeline_tag": tag, "tags": tags}
+    assert hub_model(item)["task"] == expected
+
+
+def test_keyword_fallback_matches_whole_tokens() -> None:
+    assert classify_task(None, [], "MoGe-2-LiteRT") == "other"  # not "ge"/"moge" substrings
+    assert classify_task(None, [], "graphics-asrx") == "other"
+    assert classify_task(None, [], "Phi-3-mini") == "llm"
